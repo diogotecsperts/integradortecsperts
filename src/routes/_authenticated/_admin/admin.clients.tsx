@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   createTenant, createTenantUser, listTenantsAdmin, setTenantStatus, setUserBlocked,
+  getTenantSettings, upsertTenantSettings,
 } from "@/lib/admin.functions";
 import * as React from "react";
-import { Plus, Lock, Unlock, UserPlus, Loader2 } from "lucide-react";
+import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
 
@@ -27,6 +28,7 @@ function ClientsPage() {
 
   const [openTenant, setOpenTenant] = React.useState(false);
   const [openUser, setOpenUser] = React.useState<string | null>(null);
+  const [openSettings, setOpenSettings] = React.useState<{ id: string; name: string } | null>(null);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["admin", "tenants"] });
@@ -102,6 +104,12 @@ function ClientsPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button
+                      onClick={() => setOpenSettings({ id: t.id, name: t.name })}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-secondary"
+                    >
+                      <SettingsIcon className="h-3.5 w-3.5" /> Configurações
+                    </button>
+                    <button
                       onClick={() => setOpenUser(t.id)}
                       className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-secondary"
                     >
@@ -157,6 +165,11 @@ function ClientsPage() {
             onSubmit={(v) => mUser.mutate({ ...v, tenantId: openUser })}
             loading={mUser.isPending}
           />
+        </Modal>
+      )}
+      {openSettings && (
+        <Modal title={`Configurações — ${openSettings.name}`} onClose={() => setOpenSettings(null)}>
+          <TenantSettingsForm tenantId={openSettings.id} onDone={() => setOpenSettings(null)} />
         </Modal>
       )}
     </div>
