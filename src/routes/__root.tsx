@@ -54,7 +54,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lumen BI — Plataforma de BI & Agentes IA" },
+      { title: "Integrador Tecsperts — Plataforma de BI & Agentes IA" },
       { name: "description", content: "SaaS B2B multi-tenant com Business Intelligence e Agentes de IA Autônomos." },
     ],
     links: [{ rel: "stylesheet", href: appCss }],

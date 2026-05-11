@@ -86,7 +86,7 @@ function SidebarContent({
           <Sparkles className="h-5 w-5 text-primary-foreground" />
         </div>
         <div>
-          <div className="font-semibold leading-none">Lumen<span className="gradient-text">BI</span></div>
+          <div className="font-semibold leading-none">Integrador <span className="gradient-text">Tecsperts</span></div>
           <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
             {isAdmin && path.startsWith("/admin") ? "Console Admin" : "Workspace"}
           </div>
