@@ -18,6 +18,14 @@ const STORAGE_KEY = "tecsperts.activeTenantId";
 
 type Msg = { id: string; role: "user" | "assistant"; content: string };
 
+function cleanAssistant(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
+    .trim();
+}
+
 const SUGGESTIONS = [
   "Resuma minhas vendas dos últimos 30 dias.",
   "Quais produtos estão com estoque baixo?",
