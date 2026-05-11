@@ -135,6 +135,10 @@ function mapProduct(tenantId: string) {
 }
 
 // ===================== ESTOQUE =====================
+// GET /estoques/saldos/{idDeposito} exige idsProdutos[] (array obrigatório).
+// Não há paginação: chunk por 100 produtos.
+const STOCK_CHUNK = 100;
+
 export async function syncStock(tenantId: string) {
   const runId = await startRun(tenantId, "stock", "full");
   let count = 0;
@@ -146,24 +150,37 @@ export async function syncStock(tenantId: string) {
       await endRun(runId, true, 0, undefined, { note: "Sem depósitos espelhados — rode sync de depósitos primeiro." });
       return { ok: true, count: 0 };
     }
+
+    const { data: products } = await supabaseAdmin
+      .from("bling_products").select("bling_id").eq("tenant_id", tenantId);
+    const prodIds = (products ?? []).map((p) => p.bling_id).filter(Boolean);
+    if (prodIds.length === 0) {
+      await endRun(runId, true, 0, undefined, { note: "Sem produtos espelhados — rode sync de produtos primeiro." });
+      return { ok: true, count: 0 };
+    }
+
     for (const depId of depIds) {
-      let pagina = 1;
-      for (;;) {
+      for (let i = 0; i < prodIds.length; i += STOCK_CHUNK) {
+        const chunk = prodIds.slice(i, i + STOCK_CHUNK);
         const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
-          tenantId, `/estoques/saldos/${depId}`,
-          { searchParams: { pagina, limite: 100 } },
+          tenantId,
+          `/estoques/saldos/${depId}`,
+          { searchParams: { idsProdutos: chunk } },
         );
         const list = resp?.data ?? [];
-        if (list.length === 0) break;
-        const rows = list.map((s) => ({
-          tenant_id: tenantId,
-          produto_id: Number((s.produto as Record<string, unknown>)?.id ?? s.idProduto),
-          deposito_id: Number(depId),
-          saldo_fisico: Number(s.saldoFisico) || 0,
-          saldo_virtual: Number(s.saldoVirtual) || 0,
-          raw: s,
-          synced_at: new Date().toISOString(),
-        })).filter((r) => r.produto_id);
+        if (list.length === 0) continue;
+        const rows = list.map((s) => {
+          const prod = (s.produto as Record<string, unknown>) ?? {};
+          return {
+            tenant_id: tenantId,
+            produto_id: Number(prod.id),
+            deposito_id: Number(depId),
+            saldo_fisico: Number(s.saldoFisicoTotal) || 0,
+            saldo_virtual: Number(s.saldoVirtualTotal) || 0,
+            raw: s,
+            synced_at: new Date().toISOString(),
+          };
+        }).filter((r) => r.produto_id);
         if (rows.length) {
           const { error } = await supabaseAdmin
             .from("bling_stock_balances")
@@ -171,8 +188,6 @@ export async function syncStock(tenantId: string) {
           if (error) throw new Error(error.message);
           count += rows.length;
         }
-        if (list.length < 100) break;
-        pagina++;
       }
     }
     await endRun(runId, true, count);
