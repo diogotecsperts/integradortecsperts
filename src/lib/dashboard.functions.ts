@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { resolveActiveTenantId } from "@/lib/admin.functions";
+import { resolveActiveTenantId } from "@/lib/tenant-resolve.server";
 
 type OrderRow = {
   data: string | null;
