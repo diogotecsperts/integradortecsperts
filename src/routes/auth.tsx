@@ -102,30 +102,32 @@ function AuthPage() {
             </button>
           </form>
 
-          <div className="mt-6 border-t border-border pt-4 text-center">
-            <button
-              type="button"
-              onClick={() => setShowSetup((v) => !v)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Primeira instalação? Configurar superadmin
-            </button>
-            {showSetup && (
-              <div className="mt-3 rounded-lg border border-dashed border-border bg-secondary/30 p-3 text-left">
-                <p className="text-xs text-muted-foreground">
-                  Use o e-mail seed (<code className="text-foreground">diogomixcds@gmail.com</code>) com uma senha 8+
-                  e clique abaixo. Só funciona enquanto não houver superadmin.
-                </p>
-                <button
-                  onClick={onBootstrap}
-                  disabled={submitting}
-                  className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-secondary"
-                >
-                  Criar superadmin
-                </button>
-              </div>
-            )}
-          </div>
+          {canBootstrap && (
+            <div className="mt-6 border-t border-border pt-4 text-center">
+              <button
+                type="button"
+                onClick={() => setShowSetup((v) => !v)}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Primeira instalação? Configurar superadmin
+              </button>
+              {showSetup && (
+                <div className="mt-3 rounded-lg border border-dashed border-border bg-secondary/30 p-3 text-left">
+                  <p className="text-xs text-muted-foreground">
+                    Use o e-mail seed (<code className="text-foreground">diogomixcds@gmail.com</code>) com uma senha 8+
+                    e clique abaixo. Só funciona enquanto não houver superadmin.
+                  </p>
+                  <button
+                    onClick={onBootstrap}
+                    disabled={submitting}
+                    className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-xs font-medium hover:bg-secondary"
+                  >
+                    Criar superadmin
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
