@@ -4,7 +4,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
-import { bootstrapSuperadmin } from "@/lib/admin.functions";
+import { useQuery } from "@tanstack/react-query";
+import { bootstrapSuperadmin, superadminExists } from "@/lib/admin.functions";
 
 export const Route = createFileRoute("/auth")({
   component: AuthPage,
@@ -18,6 +19,13 @@ function AuthPage() {
   const [submitting, setSubmitting] = React.useState(false);
   const [showSetup, setShowSetup] = React.useState(false);
   const bootstrap = useServerFn(bootstrapSuperadmin);
+  const checkExists = useServerFn(superadminExists);
+  const { data: existsData } = useQuery({
+    queryKey: ["superadmin-exists"],
+    queryFn: () => checkExists(),
+    staleTime: 60_000,
+  });
+  const canBootstrap = existsData?.exists === false;
 
   React.useEffect(() => {
     if (!loading && user) {
