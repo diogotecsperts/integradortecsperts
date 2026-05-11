@@ -21,7 +21,7 @@ async function endRun(id: string, ok: boolean, items: number, errMsg?: string, m
       finished_at: new Date().toISOString(),
       items_processed: items,
       error_message: errMsg ?? null,
-      meta: meta ?? null,
+      meta: (meta ?? null) as never,
     })
     .eq("id", id);
 }
