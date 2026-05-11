@@ -1,16 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import * as React from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Bot, Send, Sparkles, User2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { chatWithAgent } from "@/lib/agent.functions";
+import { listTenantsForSelector } from "@/lib/admin.functions";
 
 export const Route = createFileRoute("/_authenticated/agent")({
   component: AgentPage,
 });
+
+const STORAGE_KEY = "tecsperts.activeTenantId";
 
 type Msg = { id: string; role: "user" | "assistant"; content: string };
 
