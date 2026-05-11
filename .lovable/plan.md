@@ -1,100 +1,33 @@
-## Diagnóstico
+## Correções no Chat do Agente
 
-Investiguei o banco e a documentação oficial da Minimax. Encontrei **2 causas independentes** que explicam exatamente o que você está vendo.
+### 1. Remover vazamento de `<think>...</think>` (backend)
+**Arquivo:** `src/lib/agent.functions.ts`
 
-### Causa 1 — Superadmin sem `tenant_id`
+- Adicionar helper `stripThinkTags(text: string)` que remove `/<think>[\s\S]*?<\/think>/gi` e também tags órfãs `<think>` / `</think>` soltas, depois faz `.trim()`.
+- Aplicar no conteúdo do assistant **antes** de:
+  - Persistir em `ai_messages` (a versão salva já fica limpa).
+  - Retornar para o cliente no payload da server function.
+- Manter o raciocínio fora dos logs visíveis (apenas `console.debug` opcional, não retornado).
 
-```
-profiles:
- diogomixcds@gmail.com   → tenant_id = NULL   (superadmin)
- diogotecinove@gmail.com → tenant_id = d23d…  (cliente, dono dos 49.538 pedidos)
-```
+### 2. Renderização correta de tabelas Markdown (frontend)
+**Arquivo:** `src/routes/_authenticated/agent.tsx`
 
-- `getDashboardMetrics` faz `select tenant_id from profiles where id = userId` e, se vier `null`, retorna `null` sem nem consultar `bling_orders`. Como você é superadmin, sempre cai aqui → **dashboard vazio**.
-- `chatWithAgent` faz a mesma checagem e lança `"Sem tenant associado."` antes mesmo de chamar a Minimax → **agente não responde nada**.
+- Instalar `remark-gfm` (`bun add remark-gfm`).
+- Importar e passar `remarkPlugins={[remarkGfm]}` ao `<ReactMarkdown>`.
+- Envolver em `<div className="prose prose-sm dark:prose-invert max-w-none">` para herdar tipografia consistente (Tailwind typography já presente no projeto; se não, usar classes utilitárias para `table`, `th`, `td` com `border`, `px-2`, `py-1`).
+- Como salvaguarda extra, aplicar `stripThinkTags` também no cliente antes de renderizar (defesa em profundidade para mensagens antigas já salvas).
 
-Os dados estão lá: `bling_orders` tem **49.538 linhas** sincronizadas com sucesso para o tenant do cliente.
+### 3. Ajuste no System Prompt
+**Arquivo:** `src/lib/agent.functions.ts` (`SYSTEM_PROMPT`)
 
-### Causa 2 — Configuração da Minimax incorreta
+Adicionar diretrizes de formatação:
+- "Nunca exponha seu raciocínio interno ou tags `<think>`. Responda apenas com o resultado final."
+- "Ao usar tabelas Markdown, sempre separe o cabeçalho, a linha divisória e cada linha de dados com quebras de linha reais (`\n`), e deixe uma linha em branco antes e depois da tabela."
+- "Prefira listas com bullets (`-`) para comparações curtas; use tabelas apenas quando houver 3+ colunas relevantes."
 
-Conferi a doc oficial (`platform.minimax.io/docs/api-reference/text-chat-openai`). A assinatura correta é:
+### 4. Verificação
+- Rodar nova pergunta no chat que provoque tool-calling + tabela.
+- Confirmar: nenhuma tag `<think>` visível, tabela renderizada com linhas/colunas corretas, mensagens persistidas em `ai_messages` já vêm limpas.
 
-| Item | O que está hoje | O que a doc oficial pede |
-|---|---|---|
-| Endpoint | `https://api.minimax.io/v1/text/chatcompletion_v2` | `https://api.minimax.io/v1/chat/completions` (OpenAI-compatível) |
-| Header | `Authorization: Bearer <key>` | ✅ igual |
-| `model` | `"minimax m2.7"` | `"MiniMax-M2.7"` (case-sensitive, com hífen) |
-| Tool calling | `tools` + `tool_choice: "auto"` | ✅ suportado igual ao OpenAI |
-| Resposta | `{ base_resp, choices }` | OpenAI-padrão `{ choices, usage }` |
-
-Mesmo que o `tenant_id` estivesse certo, a chamada para Minimax falharia (404 / "model not found").
-
----
-
-## Plano de correção
-
-### 1. Permitir Superadmin escolher um tenant para BI/Agent
-
-- Adicionar nova server function `listTenantsForAdmin` (super-admin only) em `src/lib/admin.functions.ts` retornando `id, name` dos tenants ativos.
-- Criar helper `resolveActiveTenantId(userId, requestedTenantId?)`:
-  - Se usuário é superadmin → usa `requestedTenantId` (validado contra a lista de tenants); se não houver, pega o primeiro tenant ativo como default.
-  - Se usuário é cliente → ignora `requestedTenantId`, força o `profile.tenant_id`.
-- Atualizar:
-  - `getDashboardMetrics` → recebe opcional `tenantId` no input.
-  - `chatWithAgent` → recebe opcional `tenantId` no input (e persiste a conversa nesse tenant).
-- UI:
-  - **Dashboard** (`src/routes/_authenticated/dashboard.tsx`): se o usuário for superadmin, mostrar um `<Select>` no topo "Visualizando dados de: [Cliente]" persistido em `localStorage`. Cliente comum não vê o seletor.
-  - **Agente** (`src/routes/_authenticated/agent.tsx`): mesma lógica — superadmin escolhe o tenant antes de chatear; o seletor reusa o componente.
-- Fallback amigável quando não há nenhum tenant com pedidos: mantém o card vazio com CTA "Rodar Sync Pedidos".
-
-### 2. Corrigir cliente Minimax para conformidade com a doc oficial
-
-Em `src/lib/agent.functions.ts`:
-
-- Trocar constante:
-  ```ts
-  const MINIMAX_URL = "https://api.minimax.io/v1/chat/completions";
-  const MODEL = "MiniMax-M2.7";
-  ```
-- Ajustar parser de resposta para o formato OpenAI puro (remover dependência de `base_resp`); manter tratamento de 401/402/429.
-- Garantir que o `system` message use o formato suportado (`role: "system", content: "<prompt>"`) e que mensagens `tool` sigam o schema OpenAI (`role: "tool", tool_call_id, content`) — já está, só validar.
-- Adicionar `max_tokens: 2048` e `temperature: 0.2` para respostas determinísticas de BI.
-- Logar `console.error` com `status + body` em caso de erro para facilitar debug futuro via `server-function-logs`.
-
-### 3. Verificação
-
-- Após aplicar, eu vou:
-  1. Chamar `getDashboardMetrics` via `invoke-server-function` autenticado como superadmin com o `tenant_id` do cliente real → confirmar que volta `totals.orders ≈ 49538`.
-  2. Chamar `chatWithAgent` com a pergunta `"Resuma minhas vendas dos últimos 30 dias."` → confirmar resposta textual com números reais.
-  3. Conferir os logs (`server-function-logs`) para garantir que não há mais 404 da Minimax.
-
-### O que NÃO vou tocar
-
-- Esquema do banco (já está correto, dados presentes).
-- Diretriz READ-ONLY do Bling.
-- Lógica de sincronização de pedidos/estoque/produtos (todas em `ok`).
-
----
-
-## Detalhes técnicos resumidos
-
-```text
-Fluxo atual (quebrado):
-  Superadmin → /dashboard → getDashboardMetrics()
-    profile.tenant_id = NULL  →  return null  →  KPIs zerados
-
-Fluxo corrigido:
-  Superadmin → /dashboard
-    → listTenantsForAdmin()  → [{id, name}]
-    → seletor (default: 1º tenant)
-    → getDashboardMetrics({ tenantId })
-    → resolveActiveTenantId valida que é superadmin
-    → query bling_orders WHERE tenant_id = X
-```
-
-```text
-Minimax — antes:  POST /v1/text/chatcompletion_v2  model="minimax m2.7"   → 404
-Minimax — depois: POST /v1/chat/completions        model="MiniMax-M2.7"   → 200
-```
-
-Quer que eu prossiga com a implementação nessa ordem?
+### Fora de escopo
+Lógica de tool-calling, queries de BI, autenticação, sync do Bling — permanecem intactos.
