@@ -6,10 +6,10 @@ import {
   getTenantSettings, upsertTenantSettings,
 } from "@/lib/admin.functions";
 import * as React from "react";
-import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
-import { runBlingSync, getBlingStatus } from "@/lib/bling.functions";
+import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling } from "@/lib/bling.functions";
 
 export const Route = createFileRoute("/_authenticated/_admin/admin/clients")({
   component: ClientsPage,
