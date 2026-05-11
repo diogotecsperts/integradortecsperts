@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Bot, Send, Sparkles, User2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { chatWithAgent } from "@/lib/agent.functions";
@@ -16,6 +17,14 @@ export const Route = createFileRoute("/_authenticated/agent")({
 const STORAGE_KEY = "tecsperts.activeTenantId";
 
 type Msg = { id: string; role: "user" | "assistant"; content: string };
+
+function cleanAssistant(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
+    .trim();
+}
 
 const SUGGESTIONS = [
   "Resuma minhas vendas dos últimos 30 dias.",
@@ -175,8 +184,10 @@ function Bubble({ m }: { m: Msg }) {
         "max-w-[80%] rounded-2xl px-4 py-2.5 text-sm",
         isUser ? "bg-primary/15 border border-primary/20" : "glass",
       )}>
-        <div className="prose prose-invert prose-sm max-w-none prose-p:my-1">
-          <ReactMarkdown>{m.content}</ReactMarkdown>
+        <div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-table:my-2 prose-th:px-2 prose-th:py-1 prose-td:px-2 prose-td:py-1 prose-table:border prose-th:border prose-td:border prose-table:border-border prose-th:border-border prose-td:border-border">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {cleanAssistant(m.content)}
+          </ReactMarkdown>
         </div>
       </div>
     </div>

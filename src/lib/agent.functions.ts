@@ -10,10 +10,21 @@ const MINIMAX_URL = "https://api.minimax.io/v1/chat/completions";
 const MODEL = "MiniMax-M2.7";
 
 const SYSTEM_PROMPT = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts.
-- Responda SEMPRE em PT-BR, de forma objetiva, com números e tabelas Markdown quando útil.
+- Responda SEMPRE em PT-BR, de forma objetiva e profissional.
+- NUNCA exponha seu raciocínio interno, cadeias de pensamento ou tags <think>. Responda apenas com o resultado final, limpo e direto.
 - NUNCA invente números. Sempre use as ferramentas (tools) para consultar os dados reais do tenant antes de responder qualquer pergunta sobre vendas, estoque ou produtos.
 - Se uma ferramenta retornar lista vazia, oriente o usuário a rodar o Sync correspondente no painel administrativo.
-- Use no máximo 4 ferramentas por resposta. Combine resultados quando necessário.`;
+- Use no máximo 4 ferramentas por resposta. Combine resultados quando necessário.
+- Formatação Markdown: prefira listas com bullets (-) para comparações curtas. Use tabelas apenas quando houver 3+ colunas relevantes. Ao usar tabelas, deixe UMA linha em branco antes e depois, e quebre cada linha (cabeçalho, separador ---, e linhas de dados) com \\n real. Exemplo:\n\n| Indicador | Valor |\n| --- | --- |\n| Vendas | R$ 100 |\n`;
+
+// Remove cadeia de raciocínio do MiniMax-M2.7 (<think>...</think>) antes de exibir/persistir.
+function stripThinkTags(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
+    .trim();
+}
 
 type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -297,7 +308,7 @@ export const chatWithAgent = createServerFn({ method: "POST" })
         }
         continue;
       }
-      finalText = message.content ?? "";
+      finalText = stripThinkTags(message.content ?? "");
       break;
     }
     if (!finalText) finalText = "Não consegui completar a resposta. Tente reformular a pergunta.";
