@@ -6,9 +6,10 @@ import {
   getTenantSettings, upsertTenantSettings,
 } from "@/lib/admin.functions";
 import * as React from "react";
-import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff } from "lucide-react";
+import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
+import { runBlingSync, getBlingStatus } from "@/lib/bling.functions";
 
 export const Route = createFileRoute("/_authenticated/_admin/admin/clients")({
   component: ClientsPage,
@@ -274,7 +275,67 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
       <button disabled={m.isPending} className="w-full rounded-lg py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50" style={{ background: "var(--gradient-primary)" }}>
         {m.isPending ? "Salvando..." : "Salvar configurações"}
       </button>
+      <BlingAdminPanel tenantId={tenantId} />
     </form>
+  );
+}
+
+function BlingAdminPanel({ tenantId }: { tenantId: string }) {
+  const status = useServerFn(getBlingStatus);
+  const sync = useServerFn(runBlingSync);
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["admin", "bling-status", tenantId],
+    queryFn: () => status({ data: { tenantId } }),
+    refetchInterval: 10000,
+  });
+  const m = useMutation({
+    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "all"; mode?: "full" | "incremental" }) =>
+      sync({ data: { tenantId, resource: v.resource, mode: v.mode ?? "full" } }),
+    onSuccess: () => { toast.success("Sync concluído"); qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] }); },
+    onError: async (e) => toast.error(e instanceof Response ? (await e.text()) : (e as Error).message),
+  });
+  return (
+    <div className="space-y-3 rounded-xl border border-border/60 p-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling — Sync</div>
+        <div className="text-[10px] text-muted-foreground">
+          {data?.connected ? "Conectado" : "Desconectado"} • P:{data?.counts.products ?? 0} D:{data?.counts.deposits ?? 0} S:{data?.counts.stocks ?? 0}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <SyncBtn label="Depósitos" onClick={() => m.mutate({ resource: "deposits" })} loading={m.isPending} disabled={!data?.connected} />
+        <SyncBtn label="Produtos (full)" onClick={() => m.mutate({ resource: "products", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
+        <SyncBtn label="Produtos (incr.)" onClick={() => m.mutate({ resource: "products", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
+        <SyncBtn label="Estoque" onClick={() => m.mutate({ resource: "stock" })} loading={m.isPending} disabled={!data?.connected} />
+      </div>
+      <button type="button" disabled={m.isPending || !data?.connected}
+        onClick={() => m.mutate({ resource: "all" })}
+        className="w-full rounded-md border border-primary/40 bg-primary/10 py-2 text-xs font-medium text-primary disabled:opacity-50">
+        <RefreshCw className="mr-1 inline h-3 w-3" /> Sync FULL (tudo)
+      </button>
+      {data?.lastRuns && data.lastRuns.length > 0 && (
+        <div className="max-h-40 space-y-1 overflow-auto text-[11px]">
+          {data.lastRuns.slice(0, 8).map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-2 border-t border-border/40 pt-1">
+              <span className="font-medium">{r.resource}</span>
+              <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
+              <span className="text-muted-foreground">{r.items_processed} itens</span>
+              <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SyncBtn({ label, onClick, loading, disabled }: { label: string; onClick: () => void; loading: boolean; disabled?: boolean }) {
+  return (
+    <button type="button" disabled={loading || disabled} onClick={onClick}
+      className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-secondary disabled:opacity-50">
+      {label}
+    </button>
   );
 }
 

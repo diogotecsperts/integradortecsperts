@@ -12,10 +12,12 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedIntegracaoBlingRouteImport } from './routes/_authenticated/integracao-bling'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAgentRouteImport } from './routes/_authenticated/agent'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/_admin'
 import { Route as AuthenticatedAdminAdminIndexRouteImport } from './routes/_authenticated/_admin/admin.index'
+import { Route as ApiPublicBlingCallbackRouteImport } from './routes/api/public/bling/callback'
 import { Route as AuthenticatedAdminAdminClientsRouteImport } from './routes/_authenticated/_admin/admin.clients'
 
 const AuthRoute = AuthRouteImport.update({
@@ -32,6 +34,12 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedIntegracaoBlingRoute =
+  AuthenticatedIntegracaoBlingRouteImport.update({
+    id: '/integracao-bling',
+    path: '/integracao-bling',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -52,6 +60,11 @@ const AuthenticatedAdminAdminIndexRoute =
     path: '/admin/',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const ApiPublicBlingCallbackRoute = ApiPublicBlingCallbackRouteImport.update({
+  id: '/api/public/bling/callback',
+  path: '/api/public/bling/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedAdminAdminClientsRoute =
   AuthenticatedAdminAdminClientsRouteImport.update({
     id: '/admin/clients',
@@ -64,7 +77,9 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/agent': typeof AuthenticatedAgentRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/integracao-bling': typeof AuthenticatedIntegracaoBlingRoute
   '/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
+  '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
   '/admin/': typeof AuthenticatedAdminAdminIndexRoute
 }
 export interface FileRoutesByTo {
@@ -72,7 +87,9 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/agent': typeof AuthenticatedAgentRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/integracao-bling': typeof AuthenticatedIntegracaoBlingRoute
   '/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
+  '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
   '/admin': typeof AuthenticatedAdminAdminIndexRoute
 }
 export interface FileRoutesById {
@@ -83,7 +100,9 @@ export interface FileRoutesById {
   '/_authenticated/_admin': typeof AuthenticatedAdminRouteWithChildren
   '/_authenticated/agent': typeof AuthenticatedAgentRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/integracao-bling': typeof AuthenticatedIntegracaoBlingRoute
   '/_authenticated/_admin/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
+  '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
   '/_authenticated/_admin/admin/': typeof AuthenticatedAdminAdminIndexRoute
 }
 export interface FileRouteTypes {
@@ -93,10 +112,20 @@ export interface FileRouteTypes {
     | '/auth'
     | '/agent'
     | '/dashboard'
+    | '/integracao-bling'
     | '/admin/clients'
+    | '/api/public/bling/callback'
     | '/admin/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/agent' | '/dashboard' | '/admin/clients' | '/admin'
+  to:
+    | '/'
+    | '/auth'
+    | '/agent'
+    | '/dashboard'
+    | '/integracao-bling'
+    | '/admin/clients'
+    | '/api/public/bling/callback'
+    | '/admin'
   id:
     | '__root__'
     | '/'
@@ -105,7 +134,9 @@ export interface FileRouteTypes {
     | '/_authenticated/_admin'
     | '/_authenticated/agent'
     | '/_authenticated/dashboard'
+    | '/_authenticated/integracao-bling'
     | '/_authenticated/_admin/admin/clients'
+    | '/api/public/bling/callback'
     | '/_authenticated/_admin/admin/'
   fileRoutesById: FileRoutesById
 }
@@ -113,6 +144,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicBlingCallbackRoute: typeof ApiPublicBlingCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -137,6 +169,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/integracao-bling': {
+      id: '/_authenticated/integracao-bling'
+      path: '/integracao-bling'
+      fullPath: '/integracao-bling'
+      preLoaderRoute: typeof AuthenticatedIntegracaoBlingRouteImport
+      parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
@@ -166,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminAdminIndexRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/api/public/bling/callback': {
+      id: '/api/public/bling/callback'
+      path: '/api/public/bling/callback'
+      fullPath: '/api/public/bling/callback'
+      preLoaderRoute: typeof ApiPublicBlingCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/_admin/admin/clients': {
       id: '/_authenticated/_admin/admin/clients'
       path: '/admin/clients'
@@ -193,12 +239,14 @@ interface AuthenticatedRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRouteWithChildren
   AuthenticatedAgentRoute: typeof AuthenticatedAgentRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedIntegracaoBlingRoute: typeof AuthenticatedIntegracaoBlingRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRouteWithChildren,
   AuthenticatedAgentRoute: AuthenticatedAgentRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedIntegracaoBlingRoute: AuthenticatedIntegracaoBlingRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -209,6 +257,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicBlingCallbackRoute: ApiPublicBlingCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

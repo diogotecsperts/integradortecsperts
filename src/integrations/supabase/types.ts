@@ -170,6 +170,282 @@ export type Database = {
           },
         ]
       }
+      bling_credentials: {
+        Row: {
+          access_token_enc: string
+          connected_at: string
+          connected_by: string | null
+          expires_at: string
+          last_refresh_at: string | null
+          refresh_token_enc: string
+          scope: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          access_token_enc: string
+          connected_at?: string
+          connected_by?: string | null
+          expires_at: string
+          last_refresh_at?: string | null
+          refresh_token_enc: string
+          scope?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          access_token_enc?: string
+          connected_at?: string
+          connected_by?: string | null
+          expires_at?: string
+          last_refresh_at?: string | null
+          refresh_token_enc?: string
+          scope?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bling_credentials_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bling_deposits: {
+        Row: {
+          bling_id: number
+          desconsiderar_saldo: boolean | null
+          descricao: string | null
+          nome: string | null
+          padrao: boolean | null
+          raw: Json
+          situacao: string | null
+          synced_at: string
+          tenant_id: string
+        }
+        Insert: {
+          bling_id: number
+          desconsiderar_saldo?: boolean | null
+          descricao?: string | null
+          nome?: string | null
+          padrao?: boolean | null
+          raw?: Json
+          situacao?: string | null
+          synced_at?: string
+          tenant_id: string
+        }
+        Update: {
+          bling_id?: number
+          desconsiderar_saldo?: boolean | null
+          descricao?: string | null
+          nome?: string | null
+          padrao?: boolean | null
+          raw?: Json
+          situacao?: string | null
+          synced_at?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bling_deposits_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bling_oauth_states: {
+        Row: {
+          created_at: string
+          expires_at: string
+          redirect_uri: string
+          state: string
+          tenant_id: string
+          used_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          redirect_uri: string
+          state: string
+          tenant_id: string
+          used_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          redirect_uri?: string
+          state?: string
+          tenant_id?: string
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bling_oauth_states_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bling_products: {
+        Row: {
+          bling_id: number
+          bling_updated_at: string | null
+          categoria_id: number | null
+          codigo: string | null
+          formato: string | null
+          gtin: string | null
+          imagem_url: string | null
+          nome: string | null
+          parent_id: number | null
+          peso_liquido: number | null
+          preco: number | null
+          raw: Json
+          situacao: string | null
+          synced_at: string
+          tenant_id: string
+          tipo: string | null
+          unidade: string | null
+        }
+        Insert: {
+          bling_id: number
+          bling_updated_at?: string | null
+          categoria_id?: number | null
+          codigo?: string | null
+          formato?: string | null
+          gtin?: string | null
+          imagem_url?: string | null
+          nome?: string | null
+          parent_id?: number | null
+          peso_liquido?: number | null
+          preco?: number | null
+          raw?: Json
+          situacao?: string | null
+          synced_at?: string
+          tenant_id: string
+          tipo?: string | null
+          unidade?: string | null
+        }
+        Update: {
+          bling_id?: number
+          bling_updated_at?: string | null
+          categoria_id?: number | null
+          codigo?: string | null
+          formato?: string | null
+          gtin?: string | null
+          imagem_url?: string | null
+          nome?: string | null
+          parent_id?: number | null
+          peso_liquido?: number | null
+          preco?: number | null
+          raw?: Json
+          situacao?: string | null
+          synced_at?: string
+          tenant_id?: string
+          tipo?: string | null
+          unidade?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bling_products_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bling_stock_balances: {
+        Row: {
+          deposito_id: number
+          produto_id: number
+          raw: Json
+          saldo_fisico: number
+          saldo_virtual: number
+          synced_at: string
+          tenant_id: string
+        }
+        Insert: {
+          deposito_id: number
+          produto_id: number
+          raw?: Json
+          saldo_fisico?: number
+          saldo_virtual?: number
+          synced_at?: string
+          tenant_id: string
+        }
+        Update: {
+          deposito_id?: number
+          produto_id?: number
+          raw?: Json
+          saldo_fisico?: number
+          saldo_virtual?: number
+          synced_at?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bling_stock_balances_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bling_sync_runs: {
+        Row: {
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          items_processed: number
+          meta: Json | null
+          mode: string | null
+          resource: string
+          started_at: string
+          status: Database["public"]["Enums"]["bling_sync_status"]
+          tenant_id: string
+        }
+        Insert: {
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          items_processed?: number
+          meta?: Json | null
+          mode?: string | null
+          resource: string
+          started_at?: string
+          status?: Database["public"]["Enums"]["bling_sync_status"]
+          tenant_id: string
+        }
+        Update: {
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          items_processed?: number
+          meta?: Json | null
+          mode?: string | null
+          resource?: string
+          started_at?: string
+          status?: Database["public"]["Enums"]["bling_sync_status"]
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bling_sync_runs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -315,6 +591,7 @@ export type Database = {
     Enums: {
       ai_message_role: "user" | "assistant" | "system"
       app_role: "superadmin" | "cliente"
+      bling_sync_status: "running" | "ok" | "error"
       tenant_status: "active" | "suspended" | "blocked"
     }
     CompositeTypes: {
@@ -445,6 +722,7 @@ export const Constants = {
     Enums: {
       ai_message_role: ["user", "assistant", "system"],
       app_role: ["superadmin", "cliente"],
+      bling_sync_status: ["running", "ok", "error"],
       tenant_status: ["active", "suspended", "blocked"],
     },
   },
