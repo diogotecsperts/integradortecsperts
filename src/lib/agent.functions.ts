@@ -176,6 +176,33 @@ async function execTool(name: string, args: Record<string, unknown>, tenantId: s
         .gte("data", from).lte("data", to)
         .limit(10000);
       const rows = data ?? [];
+      if (rows.length === 0) {
+        const { data: diag } = await supabaseAdmin
+          .from("bling_orders")
+          .select("data")
+          .eq("tenant_id", tenantId)
+          .order("data", { ascending: true })
+          .limit(1);
+        const { data: diag2 } = await supabaseAdmin
+          .from("bling_orders")
+          .select("data")
+          .eq("tenant_id", tenantId)
+          .order("data", { ascending: false })
+          .limit(1);
+        const { count } = await supabaseAdmin
+          .from("bling_orders")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", tenantId);
+        return {
+          from, to, total: 0, count: 0, customers: 0, ticket_medio: 0,
+          data_availability: {
+            earliest: diag?.[0]?.data ?? null,
+            latest: diag2?.[0]?.data ?? null,
+            total_orders: count ?? 0,
+          },
+          hint: "Janela vazia. Use 'data_availability' para refazer a chamada com um range que cubra os dados existentes.",
+        };
+      }
       const total = rows.reduce((s, r) => s + Number(r.valor_total || 0), 0);
       const count = rows.length;
       const customers = new Set(rows.map((r) => r.cliente_id).filter(Boolean)).size;
