@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { BLING_OAUTH_AUTHORIZE, getCredentialStatus } from "@/lib/bling/client.server";
-import { syncDeposits, syncProducts, syncStock } from "@/lib/bling/sync.server";
+import { syncDeposits, syncProducts, syncStock, syncOrders } from "@/lib/bling/sync.server";
 
 async function getProfile(userId: string) {
   const { data } = await supabaseAdmin
@@ -62,10 +62,11 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       .select("bling_client_id, bling_client_secret")
       .eq("tenant_id", tenantId).maybeSingle();
 
-    const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }] = await Promise.all([
+    const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }, { count: nOrders }] = await Promise.all([
       supabaseAdmin.from("bling_products").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_deposits").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_stock_balances").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_orders").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
     ]);
     const { data: lastRuns } = await supabaseAdmin
       .from("bling_sync_runs")
@@ -81,7 +82,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       expiresAt: cred?.expires_at ?? null,
       connectedAt: cred?.connected_at ?? null,
       lastRefreshAt: cred?.last_refresh_at ?? null,
-      counts: { products: nProducts ?? 0, deposits: nDeposits ?? 0, stocks: nStocks ?? 0 },
+      counts: { products: nProducts ?? 0, deposits: nDeposits ?? 0, stocks: nStocks ?? 0, orders: nOrders ?? 0 },
       lastRuns: lastRuns ?? [],
     };
   });
