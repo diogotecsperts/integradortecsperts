@@ -1,35 +1,34 @@
-## Diagnóstico
+# Conectar Bling pelo Painel do Superadmin
 
-A página `/integracao-bling` foi desenhada exclusivamente para o **cliente final** (perfil com `tenant_id`). Quando o **superadmin** (sem `tenant_id` no `profiles`) acessa a rota:
+## Objetivo
+Permitir que o superadmin, dentro do modal de Configurações de cada cliente, inicie o fluxo OAuth do Bling **em nome do tenant** ou copie o link de autorização para enviar ao cliente final. Hoje o painel `BlingAdminPanel` mostra status e botões de Sync, mas não tem como gerar o `authorize_url`.
 
-- `getBlingStatus({})` no servidor entra no ramo `if (!tenantId) throw Response("Sem tenant associado", 400)`.
-- O `useQuery` no cliente entra em estado de erro, mas o componente não tem `errorComponent` configurado e a guarda `if (!data) return null` é insuficiente (a renderização do `Stat` em `data.counts.products` é o que estoura quando `data` chega parcialmente em determinadas race conditions de refetch).
-- Resultado: ErrorBoundary genérica → "Algo deu errado / Cannot read properties of undefined (reading 'products')".
+## Mudanças
 
-Conceitualmente: **superadmin não conecta Bling para si mesmo** — ele gerencia conexões dos tenants via `BlingAdminPanel` em `/admin/clients`. A rota `/integracao-bling` é exclusiva do cliente.
+### 1. `src/routes/_authenticated/_admin/admin.clients.tsx` — `BlingAdminPanel`
+- Importar `createBlingAuthLink` e `disconnectBling` de `@/lib/bling.functions` (além das já presentes), `Plug`, `Unplug`, `Copy`, `ExternalLink` de `lucide-react`.
+- Adicionar duas mutations:
+  - `mLink = useMutation({ mutationFn: () => link({ data: { tenantId } }) })` — em `onSuccess`, abre `r.url` em nova aba (`window.open(...,"_blank","noopener,noreferrer,width=720,height=820")`) e exibe toast.
+  - `mDisc = useMutation({ mutationFn: () => disc({ data: { tenantId } }) })` — invalida a query no sucesso.
+- Adicionar handler "Copiar Link": gera o link via `link({ data: { tenantId } })` e copia para `navigator.clipboard`, com toast "Link copiado — envie ao cliente".
+- Renderizar, **acima da grade de botões de Sync**, uma nova linha com:
+  - Quando `!data?.connected`:
+    - Botão primário **"Autorizar Bling"** (gradient `var(--gradient-primary)`, ícone `Plug` + `ExternalLink`), `disabled={!data?.hasAppCreds || mLink.isPending}`.
+    - Botão outline **"Copiar Link"** (ícone `Copy`), mesmas regras de disabled.
+  - Quando `data?.connected`:
+    - Badge "Conectado — expira em {expiresAt}".
+    - Botão **"Desconectar"** outline destrutivo (ícone `Unplug`).
+- Aviso inline (texto pequeno âmbar) caso `!data?.hasAppCreds`: "Cadastre Client ID/Secret antes de autorizar".
 
-## Correções
+### 2. Reativação automática dos botões de Sync
+Já implementado: `SyncBtn` e o "Sync FULL" usam `disabled={!data?.connected}` e a query tem `refetchInterval: 10000`. Após o callback gravar `bling_credentials`, o próximo refetch (≤10s) flipa `connected=true` e os botões ficam clicáveis. Sem alteração necessária aqui — apenas confirmar comportamento no QA.
 
-### 1. `src/routes/_authenticated/integracao-bling.tsx`
-- Ler `role` e `tenantId` via `useAuth()`.
-- Se `role === "superadmin"`: renderizar um card informativo direcionando ao painel `/admin/clients` (sem disparar o `useQuery`). Sem crash, sem confusão.
-- Para o cliente: adicionar optional chaining defensivo em `data?.counts?.products ?? 0` (e demais), garantir `errorComponent` na rota com mensagem clara, e tratar o estado de erro do `useQuery` exibindo a mensagem retornada pelo servidor em vez de quebrar.
+## Fora do escopo
+- Nenhuma mudança em server functions, RLS, migrations, sync ou criptografia.
+- Sem alteração na rota `/integracao-bling` (cliente final).
+- Diretiva READ-ONLY (sem POST/PUT/PATCH/DELETE em vendas/pedidos/NFe) preservada — `createBlingAuthLink` apenas grava `bling_oauth_states` e gera URL.
 
-### 2. `src/lib/bling.functions.ts` — `getBlingStatus`
-- Em vez de `throw Response(400)`, retornar um shape consistente quando não houver tenant: `{ tenantId: null, hasAppCreds: false, connected: false, counts: { products: 0, deposits: 0, stocks: 0 }, lastRuns: [], noTenant: true }`.
-- Mantém o contrato para o cliente, evita 400 no caminho feliz e elimina a possibilidade de o componente receber `data` malformado.
-
-### 3. (Defesa adicional) `errorComponent` da rota
-- Adicionar `errorComponent` em `createFileRoute` que mostra o erro com botão "Tentar novamente" usando `router.invalidate() + reset()` — substituindo a ErrorBoundary genérica no contexto desta rota.
-
-## Escopo do que NÃO muda
-
-- Nenhuma alteração em RLS, migrations, OAuth, sync, criptografia ou no `BlingAdminPanel` de superadmin.
-- Nada de novas rotas Bling de escrita (continua respeitada a diretriz READ-ONLY).
-- `tenantSettings`/credenciais permanecem intactos.
-
-## Validação
-
-1. Logar como **superadmin** → acessar `/integracao-bling` → ver card "Use o painel de administração" sem erro.
-2. Logar como **cliente** com tenant → ver status normal (Desconectado/Conectado, contadores, últimos runs).
-3. Forçar erro (ex.: derrubar tenant_id temporariamente) → ver `errorComponent` com botão de retry, sem ErrorBoundary global.
+## Detalhes técnicos
+- `createBlingAuthLink` já aceita `tenantId` opcional e valida `assertTenantAccess` (superadmin passa). Reuso direto.
+- O `redirect_uri` continua sendo derivado do host atual (`integrador.tecsperts.com`) — então abrir a janela funciona tanto para o admin quanto para enviar o link ao cliente.
+- "Copiar Link" usa `navigator.clipboard.writeText`; fallback de erro mostra a URL em toast para cópia manual.
