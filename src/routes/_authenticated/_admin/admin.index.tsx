@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { listTenantsAdmin } from "@/lib/admin.functions";
 import { Building2, Users, Activity, Bot, ShieldCheck } from "lucide-react";
 
-export const Route = createFileRoute("/_authenticated/_admin/admin")({
+export const Route = createFileRoute("/_authenticated/_admin/admin/")({
   component: AdminHome,
 });
 
