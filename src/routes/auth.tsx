@@ -58,7 +58,7 @@ function AuthPage() {
           <div className="grid h-10 w-10 place-items-center rounded-lg" style={{ background: "var(--gradient-primary)" }}>
             <Sparkles className="h-5 w-5 text-primary-foreground" />
           </div>
-          <span className="text-xl font-semibold tracking-tight">Lumen<span className="gradient-text">BI</span></span>
+          <span className="text-xl font-semibold tracking-tight">Integrador <span className="gradient-text">Tecsperts</span></span>
         </div>
 
         <div className="glass rounded-2xl p-8">
