@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { resolveActiveTenantId } from "@/lib/admin.functions";
 
 type OrderRow = {
   data: string | null;
@@ -10,12 +12,11 @@ type OrderRow = {
   situacao_id: number | null;
 };
 
-export const getDashboardMetrics = createServerFn({ method: "GET" })
+export const getDashboardMetrics = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { data: profile } = await supabaseAdmin
-      .from("profiles").select("tenant_id").eq("id", context.userId).maybeSingle();
-    const tenantId = profile?.tenant_id;
+  .inputValidator((d) => z.object({ tenantId: z.string().uuid().optional() }).parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const tenantId = await resolveActiveTenantId(context.userId, data?.tenantId);
     if (!tenantId) return null;
 
     const since = new Date();
