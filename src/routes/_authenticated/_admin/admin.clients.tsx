@@ -33,28 +33,37 @@ function ClientsPage() {
     qc.invalidateQueries({ queryKey: ["admin", "overview"] });
   };
 
+  const errMsg = async (e: unknown) => {
+    if (e instanceof Response) {
+      try { return (await e.text()) || `Erro ${e.status}`; } catch { return `Erro ${e.status}`; }
+    }
+    return (e as Error)?.message ?? "Erro desconhecido";
+  };
+
   const mTenant = useMutation({
     mutationFn: (v: { name: string; slug: string }) => create({ data: v }),
     onSuccess: () => { toast.success("Tenant criado"); setOpenTenant(false); refresh(); },
-    onError: (e) => toast.error((e as Error).message),
+    onError: async (e) => toast.error(await errMsg(e)),
   });
 
   const mUser = useMutation({
     mutationFn: (v: { email: string; password: string; tenantId: string; fullName?: string }) =>
       createUser({ data: v }),
     onSuccess: () => { toast.success("Usuário criado"); setOpenUser(null); refresh(); },
-    onError: (e) => toast.error((e as Error).message),
+    onError: async (e) => toast.error(await errMsg(e)),
   });
 
   const mStatus = useMutation({
     mutationFn: (v: { tenantId: string; status: "active" | "suspended" | "blocked" }) =>
       setStatus({ data: v }),
     onSuccess: () => { toast.success("Status atualizado"); refresh(); },
+    onError: async (e) => toast.error(await errMsg(e)),
   });
 
   const mBlock = useMutation({
     mutationFn: (v: { userId: string; blocked: boolean }) => setBlocked({ data: v }),
     onSuccess: () => { toast.success("Usuário atualizado"); refresh(); },
+    onError: async (e) => toast.error(await errMsg(e)),
   });
 
   return (
