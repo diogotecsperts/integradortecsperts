@@ -152,7 +152,7 @@ export const runBlingSync = createServerFn({ method: "POST" })
   .inputValidator((d) =>
     z.object({
       tenantId: z.string().uuid(),
-      resource: z.enum(["deposits", "products", "stock", "all"]),
+      resource: z.enum(["deposits", "products", "stock", "orders", "all"]),
       mode: z.enum(["full", "incremental"]).default("full"),
     }).parse(d),
   )
@@ -168,6 +168,9 @@ export const runBlingSync = createServerFn({ method: "POST" })
       }
       if (data.resource === "stock" || data.resource === "all") {
         out.stock = await syncStock(data.tenantId);
+      }
+      if (data.resource === "orders" || data.resource === "all") {
+        out.orders = await syncOrders(data.tenantId, data.mode);
       }
       return { ok: true, ...out };
     } catch (e) {
