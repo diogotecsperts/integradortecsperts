@@ -141,14 +141,21 @@ async function refreshIfNeeded(tenantId: string) {
 export async function blingFetch<T = unknown>(
   tenantId: string,
   path: string,
-  init?: RequestInit & { searchParams?: Record<string, string | number | undefined> },
+  init?: RequestInit & {
+    searchParams?: Record<string, string | number | Array<string | number> | undefined>;
+  },
 ): Promise<T> {
   await throttle(tenantId);
   const accessToken = await refreshIfNeeded(tenantId);
   const url = new URL(BLING_BASE + path);
   if (init?.searchParams) {
     for (const [k, v] of Object.entries(init.searchParams)) {
-      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+      if (v === undefined || v === null) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) url.searchParams.append(`${k}[]`, String(item));
+      } else {
+        url.searchParams.set(k, String(v));
+      }
     }
   }
   const res = await fetch(url.toString(), {
