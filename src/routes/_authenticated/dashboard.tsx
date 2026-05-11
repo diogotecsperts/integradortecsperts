@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
-import { TrendingUp, ShoppingCart, DollarSign, Users, ArrowUpRight } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { getDashboardMetrics } from "@/lib/dashboard.functions";
+import { TrendingUp, ShoppingCart, DollarSign, Users, ArrowUpRight, AlertCircle } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -10,60 +10,35 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 });
 
 function Dashboard() {
-  const { tenantId } = useAuth();
+  const fetchMetrics = useServerFn(getDashboardMetrics);
   const { data, isLoading } = useQuery({
-    queryKey: ["bi", tenantId],
-    enabled: !!tenantId,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("bi_metrics_mock")
-        .select("*")
-        .order("date", { ascending: true });
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryKey: ["dashboard-metrics"],
+    queryFn: () => fetchMetrics(),
   });
 
-  const rows = data ?? [];
-  const totals = rows.reduce(
-    (a, r) => ({
-      sales: a.sales + Number(r.sales),
-      orders: a.orders + r.orders,
-      customers: a.customers + r.customers,
-    }),
-    { sales: 0, orders: 0, customers: 0 },
-  );
-  const avgTicket = totals.orders ? totals.sales / totals.orders : 0;
-
-  // Aggregate per month
-  const byMonth = new Map<string, { month: string; sales: number; orders: number }>();
-  for (const r of rows) {
-    const m = r.date.slice(0, 7);
-    const prev = byMonth.get(m) ?? { month: m, sales: 0, orders: 0 };
-    prev.sales += Number(r.sales); prev.orders += r.orders;
-    byMonth.set(m, prev);
-  }
-  const monthly = [...byMonth.values()];
-
-  const byCat = new Map<string, number>();
-  for (const r of rows) {
-    if (!r.category) continue;
-    byCat.set(r.category, (byCat.get(r.category) ?? 0) + Number(r.sales));
-  }
-  const cats = [...byCat.entries()].map(([category, sales]) => ({ category, sales }));
+  const totals = data?.totals ?? { sales: 0, orders: 0, avgTicket: 0, customers: 0 };
+  const monthly = data?.monthly ?? [];
+  const bySituation = data?.bySituation ?? [];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Visão Geral</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Performance dos últimos 6 meses (dados de demonstração).</p>
+        <p className="mt-1 text-sm text-muted-foreground">Performance dos últimos 6 meses (dados reais do Bling).</p>
       </div>
 
+      {!isLoading && data && !data.hasData && (
+        <div className="glass flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200">
+          <AlertCircle className="h-5 w-5 shrink-0" />
+          <span>Nenhum pedido sincronizado ainda. Peça ao superadmin para rodar o <strong>Sync Pedidos</strong> no painel.</span>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard title="Vendas" value={brl(totals.sales)} icon={DollarSign} trend="+12,4%" />
-        <KpiCard title="Pedidos" value={totals.orders.toLocaleString("pt-BR")} icon={ShoppingCart} trend="+8,1%" />
-        <KpiCard title="Ticket médio" value={brl(avgTicket)} icon={TrendingUp} trend="+3,9%" />
-        <KpiCard title="Clientes" value={totals.customers.toLocaleString("pt-BR")} icon={Users} trend="+5,2%" />
+        <KpiCard title="Vendas" value={brl(totals.sales)} icon={DollarSign} />
+        <KpiCard title="Pedidos" value={totals.orders.toLocaleString("pt-BR")} icon={ShoppingCart} />
+        <KpiCard title="Ticket médio" value={brl(totals.avgTicket)} icon={TrendingUp} />
+        <KpiCard title="Clientes únicos" value={totals.customers.toLocaleString("pt-BR")} icon={Users} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -96,15 +71,15 @@ function Dashboard() {
         </div>
 
         <div className="glass rounded-2xl p-6">
-          <h3 className="font-semibold">Por categoria</h3>
+          <h3 className="font-semibold">Por situação</h3>
           <p className="text-xs text-muted-foreground">Vendas no período</p>
           <div className="mt-4 h-72 w-full">
             {!isLoading && (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={cats} layout="vertical">
+                <BarChart data={bySituation} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="oklch(1 0 0 / 0.06)" />
                   <XAxis type="number" stroke="oklch(0.68 0.025 270)" fontSize={11} tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
-                  <YAxis type="category" dataKey="category" stroke="oklch(0.68 0.025 270)" fontSize={11} width={70} />
+                  <YAxis type="category" dataKey="situacao" stroke="oklch(0.68 0.025 270)" fontSize={11} width={90} />
                   <Tooltip contentStyle={{ background: "oklch(0.18 0.025 270)", border: "1px solid oklch(1 0 0 / 0.1)", borderRadius: 8 }} />
                   <Bar dataKey="sales" fill="oklch(0.78 0.18 200)" radius={[0, 6, 6, 0]} />
                 </BarChart>
@@ -117,7 +92,7 @@ function Dashboard() {
   );
 }
 
-function KpiCard({ title, value, icon: Icon, trend }: { title: string; value: string; icon: React.ElementType; trend: string }) {
+function KpiCard({ title, value, icon: Icon }: { title: string; value: string; icon: React.ElementType }) {
   return (
     <div className="glass rounded-2xl p-5">
       <div className="flex items-center justify-between">
@@ -127,8 +102,8 @@ function KpiCard({ title, value, icon: Icon, trend }: { title: string; value: st
         </div>
       </div>
       <div className="mt-3 text-2xl font-bold">{value}</div>
-      <div className="mt-1 inline-flex items-center gap-1 text-xs text-success">
-        <ArrowUpRight className="h-3 w-3" /> {trend}
+      <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <ArrowUpRight className="h-3 w-3" /> últimos 180 dias
       </div>
     </div>
   );
