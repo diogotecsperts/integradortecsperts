@@ -109,7 +109,8 @@ async function persistTokens(
   }
   const { error } = await supabaseAdmin
     .from("bling_credentials")
-    .upsert(row, { onConflict: "tenant_id" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .upsert(row as any, { onConflict: "tenant_id" });
   if (error) throw new Error(`Falha ao salvar tokens: ${error.message}`);
 }
 

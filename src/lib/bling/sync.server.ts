@@ -51,7 +51,7 @@ export async function syncDeposits(tenantId: string) {
       }));
       const { error } = await supabaseAdmin
         .from("bling_deposits")
-        .upsert(rows, { onConflict: "tenant_id,bling_id" });
+        .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
       count += rows.length;
       if (list.length < 100) break;
@@ -94,7 +94,7 @@ export async function syncProducts(tenantId: string, mode: "full" | "incremental
       const rows = list.map(mapProduct(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_products")
-        .upsert(rows, { onConflict: "tenant_id,bling_id" });
+        .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
       count += rows.length;
       if (list.length < 100) break;
@@ -167,7 +167,7 @@ export async function syncStock(tenantId: string) {
         if (rows.length) {
           const { error } = await supabaseAdmin
             .from("bling_stock_balances")
-            .upsert(rows, { onConflict: "tenant_id,produto_id,deposito_id" });
+            .upsert(rows as never, { onConflict: "tenant_id,produto_id,deposito_id" });
           if (error) throw new Error(error.message);
           count += rows.length;
         }
