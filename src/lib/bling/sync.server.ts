@@ -2,7 +2,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { blingFetch, BlingError } from "./client.server";
 
-type Resource = "deposits" | "products" | "stock";
+type Resource = "deposits" | "products" | "stock" | "orders";
 
 async function startRun(tenantId: string, resource: Resource, mode: string) {
   const { data, error } = await supabaseAdmin
@@ -196,6 +196,88 @@ export async function syncStock(tenantId: string) {
     await endRun(runId, false, count, errMessage(e));
     throw e;
   }
+}
+
+// ===================== PEDIDOS DE VENDA =====================
+// GET /pedidos/vendas — paginação por pagina/limite=100, filtro incremental por dataAlteracaoInicial
+const SITUACAO_NOMES: Record<number, string> = {
+  6: "Em aberto",
+  9: "Atendido",
+  12: "Cancelado",
+  15: "Em andamento",
+  18: "Venda agenciada",
+  21: "Em digitação",
+  24: "Verificado",
+};
+
+export async function syncOrders(tenantId: string, mode: "full" | "incremental" = "full") {
+  const runId = await startRun(tenantId, "orders", mode);
+  let count = 0;
+  let dataAlteracaoInicial: string | undefined;
+  if (mode === "incremental") {
+    const { data } = await supabaseAdmin
+      .from("bling_sync_runs")
+      .select("finished_at")
+      .eq("tenant_id", tenantId).eq("resource", "orders").eq("status", "ok")
+      .order("finished_at", { ascending: false }).limit(1).maybeSingle();
+    if (data?.finished_at) {
+      const d = new Date(data.finished_at);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      dataAlteracaoInicial = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+    }
+  }
+  try {
+    let pagina = 1;
+    for (;;) {
+      const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
+        tenantId, "/pedidos/vendas",
+        { searchParams: { pagina, limite: 100, dataAlteracaoInicial } },
+      );
+      const list = resp?.data ?? [];
+      if (list.length === 0) break;
+      const rows = list.map(mapOrder(tenantId));
+      const { error } = await supabaseAdmin
+        .from("bling_orders")
+        .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
+      if (error) throw new Error(error.message);
+      count += rows.length;
+      if (list.length < 100) break;
+      pagina++;
+    }
+    await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
+    return { ok: true, count };
+  } catch (e) {
+    await endRun(runId, false, count, errMessage(e), { mode, dataAlteracaoInicial });
+    throw e;
+  }
+}
+
+function mapOrder(tenantId: string) {
+  return (o: Record<string, unknown>) => {
+    const sit = (o.situacao as Record<string, unknown>) ?? null;
+    const contato = (o.contato as Record<string, unknown>) ?? null;
+    const loja = (o.loja as Record<string, unknown>) ?? null;
+    const sitId = sit && sit.id ? Number(sit.id) : null;
+    return {
+      tenant_id: tenantId,
+      bling_id: Number(o.id),
+      numero: o.numero ? String(o.numero) : null,
+      data: (o.data as string) ?? null,
+      data_saida: (o.dataSaida as string) ?? null,
+      valor_total: typeof o.total === "number" ? o.total : Number(o.total) || 0,
+      situacao_id: sitId,
+      situacao_valor: sit && sit.valor != null ? Number(sit.valor) : null,
+      situacao_nome: sitId != null ? SITUACAO_NOMES[sitId] ?? null : null,
+      cliente_id: contato && contato.id ? Number(contato.id) : null,
+      cliente_nome: (contato?.nome as string) ?? null,
+      cliente_documento: (contato?.numeroDocumento as string) ?? null,
+      loja_id: loja && loja.id ? Number(loja.id) : null,
+      numero_loja: (o.numeroLoja as string) ?? null,
+      raw: o,
+      bling_updated_at: (o.dataAlteracao as string) ?? null,
+      synced_at: new Date().toISOString(),
+    };
+  };
 }
 
 function errMessage(e: unknown) {

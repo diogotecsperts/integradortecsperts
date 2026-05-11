@@ -1,8 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import * as React from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { Bot, Send, Sparkles, User2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { chatWithAgent } from "@/lib/agent.functions";
 
 export const Route = createFileRoute("/_authenticated/agent")({
   component: AgentPage,
@@ -11,45 +15,47 @@ export const Route = createFileRoute("/_authenticated/agent")({
 type Msg = { id: string; role: "user" | "assistant"; content: string };
 
 const SUGGESTIONS = [
-  "Quais os 5 produtos mais vendidos esse mês?",
-  "Qual a margem média dos pedidos da última semana?",
-  "Resuma minhas vendas por categoria.",
-  "Tem algum estoque com risco de ruptura?",
+  "Resuma minhas vendas dos últimos 30 dias.",
+  "Quais produtos estão com estoque baixo?",
+  "Compare as vendas por situação no último mês.",
+  "Qual o saldo do produto com código ABC?",
 ];
 
 function AgentPage() {
   const [messages, setMessages] = React.useState<Msg[]>([]);
   const [input, setInput] = React.useState("");
-  const [thinking, setThinking] = React.useState(false);
+  const [conversationId, setConversationId] = React.useState<string | undefined>();
   const endRef = React.useRef<HTMLDivElement>(null);
+  const chat = useServerFn(chatWithAgent);
 
-  React.useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages, thinking]);
+  React.useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages]);
 
-  const send = async (text?: string) => {
+  const m = useMutation({
+    mutationFn: (text: string) => chat({ data: { message: text, conversationId } }),
+    onSuccess: (r) => {
+      setConversationId(r.conversationId);
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: r.reply }]);
+    },
+    onError: async (e) => {
+      const msg = e instanceof Response ? await e.text() : (e as Error).message;
+      toast.error(msg);
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: `⚠️ ${msg}` }]);
+    },
+  });
+
+  const send = (text?: string) => {
     const content = (text ?? input).trim();
-    if (!content) return;
-    const userMsg: Msg = { id: crypto.randomUUID(), role: "user", content };
-    setMessages((m) => [...m, userMsg]);
+    if (!content || m.isPending) return;
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content }]);
     setInput("");
-    setThinking(true);
-    // TODO: substituir por chamada à Edge Function Minimax
-    await new Promise((r) => setTimeout(r, 900));
-    const reply: Msg = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content:
-        `**Demonstração:** o agente ainda não está conectado à Minimax.\n\n` +
-        `Quando ativarmos a Edge Function, sua pergunta _"${content}"_ será processada com acesso ao seu ERP.`,
-    };
-    setMessages((m) => [...m, reply]);
-    setThinking(false);
+    m.mutate(content);
   };
 
   return (
     <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-4xl flex-col">
       <div className="mb-4">
         <h1 className="text-2xl font-bold tracking-tight">Agente IA</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Pergunte em linguagem natural sobre seu ERP.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Especialista em BI/ERP — consulta seus dados reais do Bling.</p>
       </div>
 
       <div className="glass flex-1 overflow-hidden rounded-2xl">
@@ -78,8 +84,8 @@ function AgentPage() {
           )}
 
           <div className="space-y-4">
-            {messages.map((m) => <Bubble key={m.id} m={m} />)}
-            {thinking && <ThinkingBubble />}
+            {messages.map((msg) => <Bubble key={msg.id} m={msg} />)}
+            {m.isPending && <ThinkingBubble />}
             <div ref={endRef} />
           </div>
         </div>
@@ -94,10 +100,11 @@ function AgentPage() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Pergunte algo ao agente…"
           className="flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+          disabled={m.isPending}
         />
         <button
           type="submit"
-          disabled={!input.trim() || thinking}
+          disabled={!input.trim() || m.isPending}
           className="grid h-10 w-10 place-items-center rounded-xl text-primary-foreground transition disabled:opacity-50"
           style={{ background: "var(--gradient-primary)" }}
         >

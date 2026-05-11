@@ -292,7 +292,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
     refetchInterval: 10000,
   });
   const m = useMutation({
-    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "all"; mode?: "full" | "incremental" }) =>
+    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "all"; mode?: "full" | "incremental" }) =>
       sync({ data: { tenantId, resource: v.resource, mode: v.mode ?? "full" } }),
     onSuccess: () => { toast.success("Sync concluído"); qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] }); },
     onError: async (e) => toast.error(e instanceof Response ? (await e.text()) : (e as Error).message),
@@ -328,7 +328,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling — Sync</div>
         <div className="text-[10px] text-muted-foreground">
-          {data?.connected ? "Conectado" : "Desconectado"} • P:{data?.counts?.products ?? 0} D:{data?.counts?.deposits ?? 0} S:{data?.counts?.stocks ?? 0}
+          {data?.connected ? "Conectado" : "Desconectado"} • P:{data?.counts?.products ?? 0} D:{data?.counts?.deposits ?? 0} S:{data?.counts?.stocks ?? 0} O:{data?.counts?.orders ?? 0}
         </div>
       </div>
 
@@ -369,6 +369,8 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <SyncBtn label="Produtos (full)" onClick={() => m.mutate({ resource: "products", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Produtos (incr.)" onClick={() => m.mutate({ resource: "products", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Estoque" onClick={() => m.mutate({ resource: "stock" })} loading={m.isPending} disabled={!data?.connected} />
+        <SyncBtn label="Pedidos (full)" onClick={() => m.mutate({ resource: "orders", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
+        <SyncBtn label="Pedidos (incr.)" onClick={() => m.mutate({ resource: "orders", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
       </div>
       <button type="button" disabled={m.isPending || !data?.connected}
         onClick={() => m.mutate({ resource: "all" })}
