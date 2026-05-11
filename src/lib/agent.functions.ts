@@ -9,13 +9,38 @@ import { resolveActiveTenantId } from "@/lib/tenant-resolve.server";
 const MINIMAX_URL = "https://api.minimax.io/v1/chat/completions";
 const MODEL = "MiniMax-M2.7";
 
-const SYSTEM_PROMPT = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts.
+function buildSystemPrompt(): string {
+  const fmt = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(d);
+  const now = new Date();
+  const today = fmt(now);
+  const minus = (days: number) => { const d = new Date(now); d.setUTCDate(d.getUTCDate() - days); return fmt(d); };
+  const human = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  }).format(now);
+  const [yyyy, mm] = today.split("-");
+  return `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts.
+
+CONTEXTO TEMPORAL (autoritativo, sobrepõe seu conhecimento interno):
+- Data atual: ${today} (${human})
+- Hoje - 7 dias: ${minus(7)}
+- Hoje - 30 dias: ${minus(30)}
+- Hoje - 90 dias: ${minus(90)}
+- Início do mês atual: ${yyyy}-${mm}-01
+- Início do ano atual: ${yyyy}-01-01
+Use SEMPRE essas datas como referência. NUNCA assuma outro ano. Se o usuário disser "hoje", "este mês", "este ano" ou "últimos N dias", calcule a partir das datas acima.
+
+DIRETRIZES:
 - Responda SEMPRE em PT-BR, de forma objetiva e profissional.
 - NUNCA exponha seu raciocínio interno, cadeias de pensamento ou tags <think>. Responda apenas com o resultado final, limpo e direto.
 - NUNCA invente números. Sempre use as ferramentas (tools) para consultar os dados reais do tenant antes de responder qualquer pergunta sobre vendas, estoque ou produtos.
-- Se uma ferramenta retornar lista vazia, oriente o usuário a rodar o Sync correspondente no painel administrativo.
-- Use no máximo 4 ferramentas por resposta. Combine resultados quando necessário.
-- Formatação Markdown: prefira listas com bullets (-) para comparações curtas. Use tabelas apenas quando houver 3+ colunas relevantes. Ao usar tabelas, deixe UMA linha em branco antes e depois, e quebre cada linha (cabeçalho, separador ---, e linhas de dados) com \\n real. Exemplo:\n\n| Indicador | Valor |\n| --- | --- |\n| Vendas | R$ 100 |\n`;
+- Ao chamar \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` quando o usuário pedir "últimos 30 dias" (a tool já usa esse default). Só passe datas explícitas quando o usuário citar período específico, sempre derivado do CONTEXTO TEMPORAL acima.
+- Se uma tool retornar \`data_availability\` indicando que existem dados em outro intervalo, refaça a chamada com o range correto antes de responder ao usuário.
+- Se uma tool retornar lista vazia mesmo com range correto, oriente o usuário a rodar o Sync no painel.
+- Use no máximo 4 ferramentas por resposta.
+- Markdown: bullets (-) para listas curtas; tabelas apenas com 3+ colunas, com linha em branco antes/depois e quebras reais (\\n) entre cabeçalho, separador --- e dados.`;
+}
 
 // Remove cadeia de raciocínio do MiniMax-M2.7 (<think>...</think>) antes de exibir/persistir.
 function stripThinkTags(text: string): string {
