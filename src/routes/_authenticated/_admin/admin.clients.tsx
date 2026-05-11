@@ -6,10 +6,10 @@ import {
   getTenantSettings, upsertTenantSettings,
 } from "@/lib/admin.functions";
 import * as React from "react";
-import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
-import { runBlingSync, getBlingStatus } from "@/lib/bling.functions";
+import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling } from "@/lib/bling.functions";
 
 export const Route = createFileRoute("/_authenticated/_admin/admin/clients")({
   component: ClientsPage,
@@ -283,6 +283,8 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
 function BlingAdminPanel({ tenantId }: { tenantId: string }) {
   const status = useServerFn(getBlingStatus);
   const sync = useServerFn(runBlingSync);
+  const link = useServerFn(createBlingAuthLink);
+  const disc = useServerFn(disconnectBling);
   const qc = useQueryClient();
   const { data } = useQuery({
     queryKey: ["admin", "bling-status", tenantId],
@@ -295,14 +297,73 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
     onSuccess: () => { toast.success("Sync concluído"); qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] }); },
     onError: async (e) => toast.error(e instanceof Response ? (await e.text()) : (e as Error).message),
   });
+  const mLink = useMutation({
+    mutationFn: () => link({ data: { tenantId } }),
+    onSuccess: (r) => {
+      window.open(r.url, "_blank", "noopener,noreferrer,width=720,height=820");
+      toast.success("Janela de autorização aberta");
+    },
+    onError: async (e) => toast.error(e instanceof Response ? await e.text() : (e as Error).message),
+  });
+  const mCopy = useMutation({
+    mutationFn: () => link({ data: { tenantId } }),
+    onSuccess: async (r) => {
+      try {
+        await navigator.clipboard.writeText(r.url);
+        toast.success("Link copiado — envie ao cliente");
+      } catch {
+        toast.message("Copie manualmente:", { description: r.url });
+      }
+    },
+    onError: async (e) => toast.error(e instanceof Response ? await e.text() : (e as Error).message),
+  });
+  const mDisc = useMutation({
+    mutationFn: () => disc({ data: { tenantId } }),
+    onSuccess: () => { toast.success("Bling desconectado"); qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] }); },
+    onError: async (e) => toast.error(e instanceof Response ? await e.text() : (e as Error).message),
+  });
+  const linkBusy = mLink.isPending || mCopy.isPending;
   return (
     <div className="space-y-3 rounded-xl border border-border/60 p-3">
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling — Sync</div>
         <div className="text-[10px] text-muted-foreground">
-          {data?.connected ? "Conectado" : "Desconectado"} • P:{data?.counts.products ?? 0} D:{data?.counts.deposits ?? 0} S:{data?.counts.stocks ?? 0}
+          {data?.connected ? "Conectado" : "Desconectado"} • P:{data?.counts?.products ?? 0} D:{data?.counts?.deposits ?? 0} S:{data?.counts?.stocks ?? 0}
         </div>
       </div>
+
+      {!data?.hasAppCreds && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-300">
+          Cadastre Client ID/Secret acima antes de autorizar.
+        </div>
+      )}
+
+      {data?.connected ? (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 text-[11px]">
+          <span className="text-emerald-300">
+            Conectado{data.expiresAt ? ` — expira em ${new Date(data.expiresAt).toLocaleString("pt-BR")}` : ""}
+          </span>
+          <button type="button" disabled={mDisc.isPending} onClick={() => mDisc.mutate()}
+            className="inline-flex items-center gap-1 rounded-md border border-destructive/40 px-2 py-1 text-[11px] text-destructive hover:bg-destructive/10 disabled:opacity-50">
+            <Unplug className="h-3 w-3" /> Desconectar
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" disabled={linkBusy || !data?.hasAppCreds}
+            onClick={() => mLink.mutate()}
+            className="inline-flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            style={{ background: "var(--gradient-primary)" }}>
+            <Plug className="h-3.5 w-3.5" /> Autorizar Bling <ExternalLink className="h-3 w-3 opacity-70" />
+          </button>
+          <button type="button" disabled={linkBusy || !data?.hasAppCreds}
+            onClick={() => mCopy.mutate()}
+            className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-2 text-xs hover:bg-secondary disabled:opacity-50">
+            <Copy className="h-3.5 w-3.5" /> Copiar Link
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-2">
         <SyncBtn label="Depósitos" onClick={() => m.mutate({ resource: "deposits" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Produtos (full)" onClick={() => m.mutate({ resource: "products", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
