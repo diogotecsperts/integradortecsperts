@@ -147,6 +147,26 @@ export const listTenantsAdmin = createServerFn({ method: "GET" })
     };
   });
 
+/** Lista tenants para o seletor (superadmin vê todos; cliente vê só o seu). */
+export const listTenantsForSelector = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data: roleRow } = await supabaseAdmin
+      .from("user_roles").select("role").eq("user_id", context.userId).eq("role", "superadmin").maybeSingle();
+    const isSuper = !!roleRow;
+    if (isSuper) {
+      const { data } = await supabaseAdmin
+        .from("tenants").select("id, name").eq("status", "active").order("name");
+      return { isSuperadmin: true as const, tenants: data ?? [] };
+    }
+    const { data: prof } = await supabaseAdmin
+      .from("profiles").select("tenant_id").eq("id", context.userId).maybeSingle();
+    if (!prof?.tenant_id) return { isSuperadmin: false as const, tenants: [] };
+    const { data: t } = await supabaseAdmin
+      .from("tenants").select("id, name").eq("id", prof.tenant_id).maybeSingle();
+    return { isSuperadmin: false as const, tenants: t ? [t] : [] };
+  });
+
 /** Lê configurações (Bling/Resend/Minimax) de um tenant. Apenas superadmin. */
 export const getTenantSettings = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])

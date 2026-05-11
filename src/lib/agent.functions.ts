@@ -1,11 +1,13 @@
-// Agente IA — Minimax m2.7 com tool calling escopado por tenant.
+// Agente IA — Minimax M2.7 (OpenAI-compatible) com tool calling escopado por tenant.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { resolveActiveTenantId } from "@/lib/tenant-resolve.server";
 
-const MINIMAX_URL = "https://api.minimax.io/v1/text/chatcompletion_v2";
-const MODEL = "minimax m2.7";
+// Endpoint OpenAI-compatible da Minimax (https://platform.minimax.io/docs/api-reference/text-chat-openai)
+const MINIMAX_URL = "https://api.minimax.io/v1/chat/completions";
+const MODEL = "MiniMax-M2.7";
 
 const SYSTEM_PROMPT = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts.
 - Responda SEMPRE em PT-BR, de forma objetiva, com números e tabelas Markdown quando útil.
@@ -204,19 +206,19 @@ async function callMinimax(apiKey: string, messages: ChatMessage[]): Promise<{
       messages,
       tools: TOOLS,
       tool_choice: "auto",
+      temperature: 0.2,
+      max_tokens: 2048,
     }),
   });
   const text = await res.text();
-  let json: { choices?: Array<{ message: ChatMessage; finish_reason: string }>; base_resp?: { status_code: number; status_msg: string } };
-  try { json = JSON.parse(text); } catch { throw new Error(`Minimax resposta inválida: ${text.slice(0, 300)}`); }
   if (!res.ok) {
+    console.error("[minimax]", res.status, text.slice(0, 500));
     if (res.status === 401 || res.status === 403) throw new Error("Chave Minimax inválida — atualize em Configurações.");
     if (res.status === 429) throw new Error("Limite de requisições Minimax atingido, tente em instantes.");
     throw new Error(`Minimax ${res.status}: ${text.slice(0, 300)}`);
   }
-  if (json.base_resp && json.base_resp.status_code !== 0) {
-    throw new Error(`Minimax: ${json.base_resp.status_msg}`);
-  }
+  let json: { choices?: Array<{ message: ChatMessage; finish_reason: string }> };
+  try { json = JSON.parse(text); } catch { throw new Error(`Minimax resposta inválida: ${text.slice(0, 300)}`); }
   const choice = json.choices?.[0];
   if (!choice) throw new Error("Minimax não retornou choices.");
   return { message: choice.message, finish_reason: choice.finish_reason };
@@ -227,12 +229,11 @@ export const chatWithAgent = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({
     conversationId: z.string().uuid().optional(),
+    tenantId: z.string().uuid().optional(),
     message: z.string().min(1).max(4000),
   }).parse(d))
   .handler(async ({ data, context }) => {
-    const { data: profile } = await supabaseAdmin
-      .from("profiles").select("tenant_id").eq("id", context.userId).maybeSingle();
-    const tenantId = profile?.tenant_id;
+    const tenantId = await resolveActiveTenantId(context.userId, data.tenantId);
     if (!tenantId) throw new Response("Sem tenant associado.", { status: 400 });
 
     const { data: settings } = await supabaseAdmin

@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import * as React from "react";
 import { getDashboardMetrics } from "@/lib/dashboard.functions";
+import { listTenantsForSelector } from "@/lib/admin.functions";
 import { TrendingUp, ShoppingCart, DollarSign, Users, ArrowUpRight, AlertCircle } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -9,28 +11,76 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
 });
 
+const STORAGE_KEY = "tecsperts.activeTenantId";
+
 function Dashboard() {
   const fetchMetrics = useServerFn(getDashboardMetrics);
+  const fetchTenants = useServerFn(listTenantsForSelector);
+
+  const tenantsQ = useQuery({
+    queryKey: ["tenants-selector"],
+    queryFn: () => fetchTenants(),
+  });
+
+  const [tenantId, setTenantId] = React.useState<string | undefined>(() => {
+    if (typeof window === "undefined") return undefined;
+    return localStorage.getItem(STORAGE_KEY) ?? undefined;
+  });
+
+  // Default automático: se superadmin sem seleção, escolhe o 1º tenant.
+  React.useEffect(() => {
+    if (!tenantsQ.data) return;
+    const list = tenantsQ.data.tenants;
+    if (!list.length) return;
+    if (!tenantId || !list.find((t) => t.id === tenantId)) {
+      const next = list[0]!.id;
+      setTenantId(next);
+      try { localStorage.setItem(STORAGE_KEY, next); } catch { /* noop */ }
+    }
+  }, [tenantsQ.data, tenantId]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboard-metrics"],
-    queryFn: () => fetchMetrics(),
+    queryKey: ["dashboard-metrics", tenantId],
+    queryFn: () => fetchMetrics({ data: { tenantId } }),
+    enabled: !!tenantId,
   });
 
   const totals = data?.totals ?? { sales: 0, orders: 0, avgTicket: 0, customers: 0 };
   const monthly = data?.monthly ?? [];
   const bySituation = data?.bySituation ?? [];
+  const isSuperadmin = tenantsQ.data?.isSuperadmin ?? false;
+  const tenants = tenantsQ.data?.tenants ?? [];
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Visão Geral</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Performance dos últimos 6 meses (dados reais do Bling).</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Visão Geral</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Performance dos últimos 6 meses (dados reais do Bling).</p>
+        </div>
+        {isSuperadmin && tenants.length > 0 && (
+          <label className="glass flex items-center gap-2 rounded-xl px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Cliente:</span>
+            <select
+              className="bg-transparent text-foreground outline-none"
+              value={tenantId ?? ""}
+              onChange={(e) => {
+                setTenantId(e.target.value);
+                try { localStorage.setItem(STORAGE_KEY, e.target.value); } catch { /* noop */ }
+              }}
+            >
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id} className="bg-background">{t.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       {!isLoading && data && !data.hasData && (
         <div className="glass flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200">
           <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>Nenhum pedido sincronizado ainda. Peça ao superadmin para rodar o <strong>Sync Pedidos</strong> no painel.</span>
+          <span>Nenhum pedido sincronizado ainda. Rode o <strong>Sync Pedidos</strong> no painel administrativo.</span>
         </div>
       )}
 
