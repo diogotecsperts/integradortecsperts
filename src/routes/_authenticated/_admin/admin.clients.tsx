@@ -7,7 +7,7 @@ import {
 import * as React from "react";
 import { Plus, Lock, Unlock, UserPlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { StatusBadge } from "./admin";
+import { StatusBadge } from "./admin.index";
 
 export const Route = createFileRoute("/_authenticated/_admin/admin/clients")({
   component: ClientsPage,
