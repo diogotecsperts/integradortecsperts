@@ -229,3 +229,70 @@ function Input({ label, value, onChange, type = "text" }: { label: string; value
     </div>
   );
 }
+
+function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: () => void }) {
+  const get = useServerFn(getTenantSettings);
+  const upsert = useServerFn(upsertTenantSettings);
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin", "tenant-settings", tenantId],
+    queryFn: () => get({ data: { tenantId } }),
+  });
+  const [form, setForm] = React.useState({
+    bling_client_id: "", bling_client_secret: "", resend_api_key: "", minimax_api_key: "",
+  });
+  React.useEffect(() => {
+    if (data) setForm({
+      bling_client_id: data.bling_client_id ?? "",
+      bling_client_secret: data.bling_client_secret ?? "",
+      resend_api_key: data.resend_api_key ?? "",
+      minimax_api_key: data.minimax_api_key ?? "",
+    });
+  }, [data]);
+  const m = useMutation({
+    mutationFn: (v: typeof form) => upsert({ data: { tenantId, ...v } }),
+    onSuccess: () => { toast.success("Configurações salvas"); onDone(); },
+    onError: async (e) => toast.error(e instanceof Response ? (await e.text()) : (e as Error).message),
+  });
+
+  if (isLoading) return <div className="grid h-32 place-items-center"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); m.mutate(form); }} className="space-y-4">
+      <div className="space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling ERP</div>
+        <Input label="Client ID" value={form.bling_client_id} onChange={(v) => setForm({ ...form, bling_client_id: v })} />
+        <SecretInput label="Client Secret" value={form.bling_client_secret} onChange={(v) => setForm({ ...form, bling_client_secret: v })} />
+      </div>
+      <div className="space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resend</div>
+        <SecretInput label="API Key" value={form.resend_api_key} onChange={(v) => setForm({ ...form, resend_api_key: v })} />
+      </div>
+      <div className="space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
+        <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
+      </div>
+      <button disabled={m.isPending} className="w-full rounded-lg py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50" style={{ background: "var(--gradient-primary)" }}>
+        {m.isPending ? "Salvando..." : "Salvar configurações"}
+      </button>
+    </form>
+  );
+}
+
+function SecretInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <div className="relative">
+        <input
+          type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded-lg border border-border bg-background/50 px-3 py-2.5 pr-10 text-sm outline-none ring-ring/30 focus:ring-2"
+          autoComplete="off"
+        />
+        <button type="button" onClick={() => setShow((v) => !v)} className="absolute inset-y-0 right-0 grid w-10 place-items-center text-muted-foreground hover:text-foreground">
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
