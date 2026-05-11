@@ -2,8 +2,8 @@ import * as React from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  Sparkles, LayoutDashboard, Bot, Settings, LogOut, Users, Building2,
-  ShieldCheck, Menu, X,
+  Sparkles, LayoutDashboard, Bot, LogOut, Building2,
+  ShieldCheck, Menu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +12,6 @@ type NavItem = { to: string; label: string; icon: React.ElementType };
 const clientNav: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/agent", label: "Agente IA", icon: Bot },
-  { to: "/settings", label: "Configurações", icon: Settings },
 ];
 
 const adminNav: NavItem[] = [
@@ -21,7 +20,7 @@ const adminNav: NavItem[] = [
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { role, user, signOut } = useAuth();
+  const { role, user, fullName, signOut } = useAuth();
   const navigate = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [mobileOpen, setMobileOpen] = React.useState(false);
@@ -53,6 +52,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Abrir menu">
             <Menu className="h-5 w-5" />
           </button>
+          {!path.startsWith("/admin") && (
+            <h1 className="text-sm font-medium md:text-base">
+              Bem-vindo, <span className="gradient-text font-semibold">{fullName ?? user?.email?.split("@")[0] ?? ""}</span>
+            </h1>
+          )}
           {isAdmin && (
             <div className="ml-auto flex items-center gap-3">
               {path.startsWith("/admin") ? (

@@ -10,6 +10,7 @@ interface AuthState {
   session: Session | null;
   role: AppRole | null;
   tenantId: string | null;
+  fullName: string | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
@@ -23,18 +24,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<User | null>(null);
   const [role, setRole] = React.useState<AppRole | null>(null);
   const [tenantId, setTenantId] = React.useState<string | null>(null);
+  const [fullName, setFullName] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
   const loadProfile = React.useCallback(async (uid: string) => {
     const [{ data: roles }, { data: profile }] = await Promise.all([
       supabase.from("user_roles").select("role").eq("user_id", uid),
-      supabase.from("profiles").select("tenant_id").eq("id", uid).maybeSingle(),
+      supabase.from("profiles").select("tenant_id, full_name").eq("id", uid).maybeSingle(),
     ]);
     const r = roles?.find((x) => x.role === "superadmin")
       ? "superadmin"
       : roles?.[0]?.role ?? null;
     setRole((r as AppRole) ?? null);
     setTenantId(profile?.tenant_id ?? null);
+    setFullName(profile?.full_name ?? null);
   }, []);
 
   React.useEffect(() => {
@@ -48,6 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setRole(null);
         setTenantId(null);
+        setFullName(null);
       }
     });
     supabase.auth.getSession().then(async ({ data }) => {
@@ -71,7 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ user, session, role, tenantId, loading, signIn, signOut, refresh }}>
+    <Ctx.Provider value={{ user, session, role, tenantId, fullName, loading, signIn, signOut, refresh }}>
       {children}
     </Ctx.Provider>
   );
