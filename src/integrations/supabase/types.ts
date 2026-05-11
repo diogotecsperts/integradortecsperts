@@ -293,6 +293,66 @@ export type Database = {
           },
         ]
       }
+      bling_orders: {
+        Row: {
+          bling_id: number
+          bling_updated_at: string | null
+          cliente_documento: string | null
+          cliente_id: number | null
+          cliente_nome: string | null
+          data: string | null
+          data_saida: string | null
+          loja_id: number | null
+          numero: string | null
+          numero_loja: string | null
+          raw: Json
+          situacao_id: number | null
+          situacao_nome: string | null
+          situacao_valor: number | null
+          synced_at: string
+          tenant_id: string
+          valor_total: number
+        }
+        Insert: {
+          bling_id: number
+          bling_updated_at?: string | null
+          cliente_documento?: string | null
+          cliente_id?: number | null
+          cliente_nome?: string | null
+          data?: string | null
+          data_saida?: string | null
+          loja_id?: number | null
+          numero?: string | null
+          numero_loja?: string | null
+          raw?: Json
+          situacao_id?: number | null
+          situacao_nome?: string | null
+          situacao_valor?: number | null
+          synced_at?: string
+          tenant_id: string
+          valor_total?: number
+        }
+        Update: {
+          bling_id?: number
+          bling_updated_at?: string | null
+          cliente_documento?: string | null
+          cliente_id?: number | null
+          cliente_nome?: string | null
+          data?: string | null
+          data_saida?: string | null
+          loja_id?: number | null
+          numero?: string | null
+          numero_loja?: string | null
+          raw?: Json
+          situacao_id?: number | null
+          situacao_nome?: string | null
+          situacao_valor?: number | null
+          synced_at?: string
+          tenant_id?: string
+          valor_total?: number
+        }
+        Relationships: []
+      }
       bling_products: {
         Row: {
           bling_id: number
