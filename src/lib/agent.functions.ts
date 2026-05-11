@@ -1,11 +1,13 @@
-// Agente IA — Minimax m2.7 com tool calling escopado por tenant.
+// Agente IA — Minimax M2.7 (OpenAI-compatible) com tool calling escopado por tenant.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { resolveActiveTenantId } from "@/lib/tenant-resolve.server";
 
-const MINIMAX_URL = "https://api.minimax.io/v1/text/chatcompletion_v2";
-const MODEL = "minimax m2.7";
+// Endpoint OpenAI-compatible da Minimax (https://platform.minimax.io/docs/api-reference/text-chat-openai)
+const MINIMAX_URL = "https://api.minimax.io/v1/chat/completions";
+const MODEL = "MiniMax-M2.7";
 
 const SYSTEM_PROMPT = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts.
 - Responda SEMPRE em PT-BR, de forma objetiva, com números e tabelas Markdown quando útil.
