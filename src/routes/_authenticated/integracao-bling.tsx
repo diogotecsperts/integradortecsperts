@@ -1,21 +1,72 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Plug, RefreshCw, Unplug, Boxes, Warehouse, BarChart3, Loader2, ExternalLink, AlertTriangle } from "lucide-react";
+import { Plug, RefreshCw, Unplug, Boxes, Warehouse, BarChart3, Loader2, ExternalLink, AlertTriangle, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { createBlingAuthLink, disconnectBling, getBlingStatus } from "@/lib/bling.functions";
+import { useAuth } from "@/hooks/use-auth";
 
 export const Route = createFileRoute("/_authenticated/integracao-bling")({
   component: IntegracaoBlingPage,
+  errorComponent: ({ error, reset }) => {
+    const router = useRouter();
+    return (
+      <div className="glass mx-auto mt-10 max-w-lg rounded-2xl p-6 text-sm">
+        <div className="flex items-center gap-2 font-semibold text-destructive">
+          <AlertTriangle className="h-4 w-4" /> Erro ao carregar Integração Bling
+        </div>
+        <p className="mt-2 text-muted-foreground">{error?.message ?? "Falha desconhecida"}</p>
+        <button
+          onClick={() => { router.invalidate(); reset(); }}
+          className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs hover:bg-secondary"
+        >
+          <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
+        </button>
+      </div>
+    );
+  },
 });
 
 function IntegracaoBlingPage() {
+  const { role } = useAuth();
+
+  if (role === "superadmin") {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Integração Bling</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Esta página é destinada ao cliente final conectar sua conta Bling.</p>
+        </div>
+        <div className="glass flex items-start gap-3 rounded-2xl p-6">
+          <ShieldCheck className="mt-0.5 h-5 w-5 text-primary" />
+          <div className="space-y-2">
+            <div className="font-semibold">Você está logado como Superadmin</div>
+            <p className="text-sm text-muted-foreground">
+              Superadmins gerenciam as conexões Bling de cada tenant pelo painel administrativo, onde também é possível disparar sincronizações e visualizar logs.
+            </p>
+            <Link
+              to="/admin/clients"
+              className="mt-2 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-primary-foreground"
+              style={{ background: "var(--gradient-primary)" }}
+            >
+              Ir para Clientes <ExternalLink className="h-3.5 w-3.5 opacity-80" />
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <ClientView />;
+}
+
+function ClientView() {
   const status = useServerFn(getBlingStatus);
   const link = useServerFn(createBlingAuthLink);
   const disc = useServerFn(disconnectBling);
   const qc = useQueryClient();
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["bling", "status", "self"],
     queryFn: () => status({}),
     refetchInterval: 15000,
@@ -33,7 +84,38 @@ function IntegracaoBlingPage() {
   });
 
   if (isLoading) return <div className="grid h-64 place-items-center"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+
+  if (error) {
+    return (
+      <div className="glass mx-auto mt-10 max-w-lg rounded-2xl p-6 text-sm">
+        <div className="flex items-center gap-2 font-semibold text-destructive">
+          <AlertTriangle className="h-4 w-4" /> Não foi possível carregar o status do Bling
+        </div>
+        <p className="mt-2 text-muted-foreground">{(error as Error).message}</p>
+        <button onClick={() => refetch()} className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs hover:bg-secondary">
+          <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   if (!data) return null;
+
+  if ("noTenant" in data && data.noTenant) {
+    return (
+      <div className="glass mx-auto mt-10 max-w-lg rounded-2xl p-6 text-sm">
+        <div className="flex items-center gap-2 font-semibold text-amber-300">
+          <AlertTriangle className="h-4 w-4" /> Sua conta ainda não está vinculada a uma empresa
+        </div>
+        <p className="mt-2 text-muted-foreground">Solicite ao administrador para associar seu usuário a um tenant antes de conectar o Bling.</p>
+      </div>
+    );
+  }
+
+  const products = data.counts?.products ?? 0;
+  const deposits = data.counts?.deposits ?? 0;
+  const stocks = data.counts?.stocks ?? 0;
+  const lastRuns = data.lastRuns ?? [];
 
   return (
     <div className="space-y-6">
@@ -99,9 +181,9 @@ function IntegracaoBlingPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Stat icon={Boxes} label="Produtos espelhados" value={data.counts.products} />
-        <Stat icon={Warehouse} label="Depósitos" value={data.counts.deposits} />
-        <Stat icon={BarChart3} label="Saldos de estoque" value={data.counts.stocks} />
+        <Stat icon={Boxes} label="Produtos espelhados" value={products} />
+        <Stat icon={Warehouse} label="Depósitos" value={deposits} />
+        <Stat icon={BarChart3} label="Saldos de estoque" value={stocks} />
       </div>
 
       <div className="glass rounded-2xl p-6">
@@ -113,10 +195,10 @@ function IntegracaoBlingPage() {
               <tr><th className="py-2">Recurso</th><th>Status</th><th>Iniciado</th><th>Itens</th><th>Erro</th></tr>
             </thead>
             <tbody>
-              {data.lastRuns.length === 0 && (
+              {lastRuns.length === 0 && (
                 <tr><td colSpan={5} className="py-6 text-center text-muted-foreground">Nenhuma sincronização ainda.</td></tr>
               )}
-              {data.lastRuns.map((r) => (
+              {lastRuns.map((r) => (
                 <tr key={r.id} className="border-t border-border/60">
                   <td className="py-2 font-medium">{r.resource}</td>
                   <td><RunStatus status={r.status} /></td>
