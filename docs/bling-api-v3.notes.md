@@ -29,3 +29,8 @@ Anotações coletadas durante a implementação. Atualizar conforme aprendemos.
 - `produto.tipo`: `'P'` produto, `'S'` serviço.
 - `produto.formato`: `'S'` simples, `'V'` variação, `'E'` com variações (pai).
 - `produto.situacao`: `'A'` ativo, `'I'` inativo, `'E'` excluído.
+
+## Estoques (saldos)
+- `GET /estoques/saldos/{idDeposito}` e `GET /estoques/saldos` exigem `idsProdutos[]` (query, array, **obrigatório**).
+- Não há paginação por `pagina/limite` — chunkar a lista de produtos (usamos 100 por chamada) e iterar por depósito.
+- Resposta: `data[].produto.id`, `saldoFisicoTotal`, `saldoVirtualTotal` (não `saldoFisico/saldoVirtual`).
