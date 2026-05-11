@@ -3,7 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Sparkles, LayoutDashboard, Bot, LogOut, Building2,
-  ShieldCheck, Menu,
+  ShieldCheck, Menu, Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ type NavItem = { to: string; label: string; icon: React.ElementType };
 const clientNav: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/agent", label: "Agente IA", icon: Bot },
+  { to: "/integracao-bling", label: "Integração Bling", icon: Plug },
 ];
 
 const adminNav: NavItem[] = [
