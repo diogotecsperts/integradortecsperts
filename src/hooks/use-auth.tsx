@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { installServerFnAuthFetch } from "@/integrations/supabase/server-fn-fetch";
 
 export type AppRole = "superadmin" | "cliente";
 
@@ -37,6 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   React.useEffect(() => {
+    installServerFnAuthFetch();
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
       setSession(s);
       setUser(s?.user ?? null);
