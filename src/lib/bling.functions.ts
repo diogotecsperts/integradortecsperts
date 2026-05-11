@@ -39,7 +39,19 @@ export const getBlingStatus = createServerFn({ method: "GET" })
     let tenantId = data.tenantId;
     if (!tenantId) {
       const p = await getProfile(context.userId);
-      if (!p?.tenant_id) throw new Response("Sem tenant associado", { status: 400 });
+      if (!p?.tenant_id) {
+        return {
+          tenantId: null,
+          hasAppCreds: false,
+          connected: false,
+          expiresAt: null,
+          connectedAt: null,
+          lastRefreshAt: null,
+          counts: { products: 0, deposits: 0, stocks: 0 },
+          lastRuns: [] as Array<never>,
+          noTenant: true as const,
+        };
+      }
       tenantId = p.tenant_id;
     }
     await assertTenantAccess(context.userId, tenantId);
