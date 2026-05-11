@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   createTenant, createTenantUser, listTenantsAdmin, setTenantStatus, setUserBlocked,
+  getTenantSettings, upsertTenantSettings,
 } from "@/lib/admin.functions";
 import * as React from "react";
-import { Plus, Lock, Unlock, UserPlus, Loader2 } from "lucide-react";
+import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
 
@@ -27,6 +28,7 @@ function ClientsPage() {
 
   const [openTenant, setOpenTenant] = React.useState(false);
   const [openUser, setOpenUser] = React.useState<string | null>(null);
+  const [openSettings, setOpenSettings] = React.useState<{ id: string; name: string } | null>(null);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["admin", "tenants"] });
@@ -102,6 +104,12 @@ function ClientsPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button
+                      onClick={() => setOpenSettings({ id: t.id, name: t.name })}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-secondary"
+                    >
+                      <SettingsIcon className="h-3.5 w-3.5" /> Configurações
+                    </button>
+                    <button
                       onClick={() => setOpenUser(t.id)}
                       className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-secondary"
                     >
@@ -159,6 +167,11 @@ function ClientsPage() {
           />
         </Modal>
       )}
+      {openSettings && (
+        <Modal title={`Configurações — ${openSettings.name}`} onClose={() => setOpenSettings(null)}>
+          <TenantSettingsForm tenantId={openSettings.id} onDone={() => setOpenSettings(null)} />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -213,6 +226,73 @@ function Input({ label, value, onChange, type = "text" }: { label: string; value
         type={type} value={value} onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-lg border border-border bg-background/50 px-3 py-2.5 text-sm outline-none ring-ring/30 focus:ring-2"
       />
+    </div>
+  );
+}
+
+function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: () => void }) {
+  const get = useServerFn(getTenantSettings);
+  const upsert = useServerFn(upsertTenantSettings);
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin", "tenant-settings", tenantId],
+    queryFn: () => get({ data: { tenantId } }),
+  });
+  const [form, setForm] = React.useState({
+    bling_client_id: "", bling_client_secret: "", resend_api_key: "", minimax_api_key: "",
+  });
+  React.useEffect(() => {
+    if (data) setForm({
+      bling_client_id: data.bling_client_id ?? "",
+      bling_client_secret: data.bling_client_secret ?? "",
+      resend_api_key: data.resend_api_key ?? "",
+      minimax_api_key: data.minimax_api_key ?? "",
+    });
+  }, [data]);
+  const m = useMutation({
+    mutationFn: (v: typeof form) => upsert({ data: { tenantId, ...v } }),
+    onSuccess: () => { toast.success("Configurações salvas"); onDone(); },
+    onError: async (e) => toast.error(e instanceof Response ? (await e.text()) : (e as Error).message),
+  });
+
+  if (isLoading) return <div className="grid h-32 place-items-center"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); m.mutate(form); }} className="space-y-4">
+      <div className="space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling ERP</div>
+        <Input label="Client ID" value={form.bling_client_id} onChange={(v) => setForm({ ...form, bling_client_id: v })} />
+        <SecretInput label="Client Secret" value={form.bling_client_secret} onChange={(v) => setForm({ ...form, bling_client_secret: v })} />
+      </div>
+      <div className="space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resend</div>
+        <SecretInput label="API Key" value={form.resend_api_key} onChange={(v) => setForm({ ...form, resend_api_key: v })} />
+      </div>
+      <div className="space-y-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
+        <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
+      </div>
+      <button disabled={m.isPending} className="w-full rounded-lg py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50" style={{ background: "var(--gradient-primary)" }}>
+        {m.isPending ? "Salvando..." : "Salvar configurações"}
+      </button>
+    </form>
+  );
+}
+
+function SecretInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <div className="relative">
+        <input
+          type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded-lg border border-border bg-background/50 px-3 py-2.5 pr-10 text-sm outline-none ring-ring/30 focus:ring-2"
+          autoComplete="off"
+        />
+        <button type="button" onClick={() => setShow((v) => !v)} className="absolute inset-y-0 right-0 grid w-10 place-items-center text-muted-foreground hover:text-foreground">
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
     </div>
   );
 }

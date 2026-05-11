@@ -1,51 +1,33 @@
-## Problema
+## Ajustes solicitados
 
-No painel do Superadmin, ao criar um tenant nada aparece na lista de Clientes. A causa real (vista nos logs de rede) é que **todas as chamadas para `/_serverFn/...` voltam com `401 Unauthorized: No authorization header provided`**. Ou seja:
+### 1. Saudação no topo (área cliente)
+No `AppShell.tsx`, dentro do `<header>`, adicionar — apenas quando NÃO for rota `/admin` — um título "Bem-vindo, {nome}" usando `full_name` do profile (fallback para parte antes do `@` do email). Vou expor `fullName` no `useAuth` carregando junto com o profile já existente.
 
-- `createTenant` → 401 → tenant **não é criado** (o toast de sucesso pode aparecer porque o erro vem como `Response` e a UI não trata bem)
-- `listTenantsAdmin` → 401 → lista vem vazia
-- `createTenantUser`, `setTenantStatus`, `setUserBlocked` → 401
+### 2. Bootstrap do superadmin na tela de login
+Hoje o botão "Primeira instalação? Configurar superadmin" fica sempre visível. Vou:
+- Criar uma server function pública `superadminExists()` (sem middleware de auth, usando `supabaseAdmin`) que retorna `true` se já existir alguém com role `superadmin`.
+- Em `auth.tsx`, chamar via `useQuery` no mount; só renderizar o bloco de bootstrap se `exists === false`.
+- Como camada extra, a função `bootstrapSuperadmin` já deve recusar se já houver superadmin (verificar e reforçar).
 
-O middleware `requireSupabaseAuth` exige `Authorization: Bearer <token>` no request, mas o cliente do TanStack Start (`useServerFn`) faz `fetch` para `/_serverFn/...` sem esse header. O Supabase JS só anexa o token em chamadas para o próprio Supabase, não para nosso backend.
+### 3. Configurações: tirar do cliente, mover para o Superadmin
+- Remover a página `/settings` do menu do cliente (`clientNav` em `AppShell.tsx`) e excluir/deslocar a rota `src/routes/_authenticated/settings.tsx`.
+- No painel do superadmin, em `admin.clients.tsx`, abrir um drawer/seção "Configurações do cliente" ao selecionar um tenant, com os campos:
+  - Bling ERP: Client ID, Client Secret
+  - Resend: API Key
+  - Minimax (Agente IA): API Key
+- Operações via novas server functions admin (`getTenantSettings`, `upsertTenantSettings`) em `src/lib/admin.functions.ts` usando `supabaseAdmin` + checagem `is_superadmin`.
+- Ajustar a policy `tenant_settings` para remover acesso de cliente (apenas superadmin lê/escreve). Migration:
+  - drop policies `settings_select_own`, `settings_insert_own`, `settings_update_own`
+  - criar policy única `settings_admin_only` (ALL) com `is_superadmin()`.
 
-Sobre o campo de senha do usuário cliente: **já existe** no formulário "Adicionar usuário" (label "Senha (8+)") e já é repassado para `supabaseAdmin.auth.admin.createUser` em `createTenantUser`. Não é necessário adicionar nada — só destravar o 401 para que efetivamente funcione.
+### Arquivos afetados
+- `src/components/AppShell.tsx` (saudação, remover item Configurações)
+- `src/hooks/use-auth.tsx` (expor `fullName`)
+- `src/routes/auth.tsx` (esconder bootstrap quando já existe superadmin)
+- `src/lib/admin.functions.ts` (nova `superadminExists`, `getTenantSettings`, `upsertTenantSettings`)
+- `src/routes/_authenticated/_admin/admin.clients.tsx` (UI de configurações por cliente)
+- `src/routes/_authenticated/settings.tsx` (excluir)
+- nova migration RLS em `tenant_settings`
 
-## O que fazer
-
-### 1. Anexar Authorization header automaticamente nas Server Functions
-Criar um interceptor de `fetch` no cliente (carregado no bootstrap da app) que, para qualquer request cujo path comece com `/_serverFn/`, injeta `Authorization: Bearer <access_token>` lendo a sessão atual do Supabase (`supabase.auth.getSession()`). 
-
-Arquivo novo: `src/integrations/supabase/server-fn-fetch.ts` — exporta uma função `installServerFnAuthFetch()` que faz patch único em `window.fetch`. Importada em `src/router.tsx` (ou em `__root.tsx`) apenas no browser.
-
-### 2. Melhorar feedback de erro no painel de Clientes
-Hoje, quando o server fn lança `Response("...", { status: 4xx })`, o `useMutation.onError` recebe um `Error` genérico. Ajustar `admin.clients.tsx` para extrair a mensagem real (ler `.text()` da Response quando aplicável) e exibir no toast — assim, qualquer falha futura fica visível em vez de silenciosa.
-
-### 3. Garantir refresh da lista após criar tenant
-Após `createTenant` retornar com sucesso, manter `qc.invalidateQueries({ queryKey: ["admin","tenants"] })` (já existe) e adicionar `await` no `mutationFn` para garantir ordem. Sem alterações de schema.
-
-### 4. Validação manual após o deploy
-1. Login como superadmin.
-2. Ir em **Clientes** → confirmar que a lista carrega (sem 401 nos network logs).
-3. Criar um tenant "Popular Farma" → ele deve aparecer imediatamente na lista.
-4. Clicar em **Adicionar usuário** no card do tenant → preencher Nome, E-mail, **Senha (8+)** → confirmar criação.
-5. Testar Bloquear/Desbloquear e mudança de status.
-
-## Fora do escopo
-
-- Nenhuma alteração de schema, RLS ou triggers.
-- Nenhuma alteração no fluxo de bootstrap do superadmin.
-- Sem mudanças em estética/UI além do toast de erro.
-
-## Detalhe técnico (referência)
-
-Padrão do interceptor (resumo):
-
-```text
-patch window.fetch:
-  if URL pathname starts with "/_serverFn/":
-    const { data } = await supabase.auth.getSession()
-    if data.session: headers.Authorization = `Bearer ${data.session.access_token}`
-  call original fetch
-```
-
-Idempotente (guarda flag para não aplicar duas vezes em HMR).
+### Fora de escopo
+Nenhuma mudança em outras telas, schema de outras tabelas ou design system.

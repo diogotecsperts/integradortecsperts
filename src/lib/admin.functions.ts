@@ -13,6 +13,15 @@ async function assertSuperadmin(userId: string) {
   if (error || !data) throw new Response("Forbidden", { status: 403 });
 }
 
+/** Verifica se já existe algum superadmin (público — usado na tela de login). */
+export const superadminExists = createServerFn({ method: "GET" }).handler(async () => {
+  const { count } = await supabaseAdmin
+    .from("user_roles")
+    .select("*", { count: "exact", head: true })
+    .eq("role", "superadmin");
+  return { exists: (count ?? 0) > 0 };
+});
+
 /** Bootstrap: cria o primeiro superadmin (somente se nenhum existir).  */
 export const bootstrapSuperadmin = createServerFn({ method: "POST" })
   .inputValidator((d) =>
@@ -136,4 +145,51 @@ export const listTenantsAdmin = createServerFn({ method: "GET" })
       tenants: tenants ?? [],
       profiles: profiles ?? [],
     };
+  });
+
+/** Lê configurações (Bling/Resend/Minimax) de um tenant. Apenas superadmin. */
+export const getTenantSettings = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ tenantId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    await assertSuperadmin(context.userId);
+    const { data: row } = await supabaseAdmin
+      .from("tenant_settings")
+      .select("*")
+      .eq("tenant_id", data.tenantId)
+      .maybeSingle();
+    return row ?? {
+      tenant_id: data.tenantId,
+      bling_client_id: "",
+      bling_client_secret: "",
+      resend_api_key: "",
+      minimax_api_key: "",
+    };
+  });
+
+/** Atualiza configurações de um tenant. Apenas superadmin. */
+export const upsertTenantSettings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      tenantId: z.string().uuid(),
+      bling_client_id: z.string().default(""),
+      bling_client_secret: z.string().default(""),
+      resend_api_key: z.string().default(""),
+      minimax_api_key: z.string().default(""),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await assertSuperadmin(context.userId);
+    const { error } = await supabaseAdmin
+      .from("tenant_settings")
+      .upsert({
+        tenant_id: data.tenantId,
+        bling_client_id: data.bling_client_id,
+        bling_client_secret: data.bling_client_secret,
+        resend_api_key: data.resend_api_key,
+        minimax_api_key: data.minimax_api_key,
+      }, { onConflict: "tenant_id" });
+    if (error) throw new Response(error.message, { status: 400 });
+    return { ok: true };
   });
