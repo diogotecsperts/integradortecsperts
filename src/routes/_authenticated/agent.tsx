@@ -30,11 +30,30 @@ function AgentPage() {
   const [conversationId, setConversationId] = React.useState<string | undefined>();
   const endRef = React.useRef<HTMLDivElement>(null);
   const chat = useServerFn(chatWithAgent);
+  const fetchTenants = useServerFn(listTenantsForSelector);
+
+  const tenantsQ = useQuery({ queryKey: ["tenants-selector"], queryFn: () => fetchTenants() });
+
+  const [tenantId, setTenantId] = React.useState<string | undefined>(() => {
+    if (typeof window === "undefined") return undefined;
+    return localStorage.getItem(STORAGE_KEY) ?? undefined;
+  });
+
+  React.useEffect(() => {
+    if (!tenantsQ.data) return;
+    const list = tenantsQ.data.tenants;
+    if (!list.length) return;
+    if (!tenantId || !list.find((t) => t.id === tenantId)) {
+      const next = list[0]!.id;
+      setTenantId(next);
+      try { localStorage.setItem(STORAGE_KEY, next); } catch { /* noop */ }
+    }
+  }, [tenantsQ.data, tenantId]);
 
   React.useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth" }), [messages]);
 
   const m = useMutation({
-    mutationFn: (text: string) => chat({ data: { message: text, conversationId } }),
+    mutationFn: (text: string) => chat({ data: { message: text, conversationId, tenantId } }),
     onSuccess: (r) => {
       setConversationId(r.conversationId);
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: r.reply }]);
@@ -54,11 +73,35 @@ function AgentPage() {
     m.mutate(content);
   };
 
+  const isSuperadmin = tenantsQ.data?.isSuperadmin ?? false;
+  const tenants = tenantsQ.data?.tenants ?? [];
+
   return (
     <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-4xl flex-col">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold tracking-tight">Agente IA</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Especialista em BI/ERP — consulta seus dados reais do Bling.</p>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Agente IA</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Especialista em BI/ERP — consulta seus dados reais do Bling.</p>
+        </div>
+        {isSuperadmin && tenants.length > 0 && (
+          <label className="glass flex items-center gap-2 rounded-xl px-3 py-2 text-sm">
+            <span className="text-muted-foreground">Cliente:</span>
+            <select
+              className="bg-transparent text-foreground outline-none"
+              value={tenantId ?? ""}
+              onChange={(e) => {
+                setTenantId(e.target.value);
+                setConversationId(undefined);
+                setMessages([]);
+                try { localStorage.setItem(STORAGE_KEY, e.target.value); } catch { /* noop */ }
+              }}
+            >
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id} className="bg-background">{t.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="glass flex-1 overflow-hidden rounded-2xl">
