@@ -33,7 +33,7 @@ function Dashboard() {
     const list = tenantsQ.data.tenants;
     if (!list.length) return;
     if (!tenantId || !list.find((t) => t.id === tenantId)) {
-      const next = list[0].id;
+      const next = list[0]!.id;
       setTenantId(next);
       try { localStorage.setItem(STORAGE_KEY, next); } catch { /* noop */ }
     }
