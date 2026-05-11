@@ -1,34 +1,55 @@
-# Conectar Bling pelo Painel do Superadmin
+# Correção do Sync de Estoque (Bling)
 
-## Objetivo
-Permitir que o superadmin, dentro do modal de Configurações de cada cliente, inicie o fluxo OAuth do Bling **em nome do tenant** ou copie o link de autorização para enviar ao cliente final. Hoje o painel `BlingAdminPanel` mostra status e botões de Sync, mas não tem como gerar o `authorize_url`.
+## Diagnóstico
 
-## Mudanças
+Erro real lido em `bling_sync_runs`:
 
-### 1. `src/routes/_authenticated/_admin/admin.clients.tsx` — `BlingAdminPanel`
-- Importar `createBlingAuthLink` e `disconnectBling` de `@/lib/bling.functions` (além das já presentes), `Plug`, `Unplug`, `Copy`, `ExternalLink` de `lucide-react`.
-- Adicionar duas mutations:
-  - `mLink = useMutation({ mutationFn: () => link({ data: { tenantId } }) })` — em `onSuccess`, abre `r.url` em nova aba (`window.open(...,"_blank","noopener,noreferrer,width=720,height=820")`) e exibe toast.
-  - `mDisc = useMutation({ mutationFn: () => disc({ data: { tenantId } }) })` — invalida a query no sucesso.
-- Adicionar handler "Copiar Link": gera o link via `link({ data: { tenantId } })` e copia para `navigator.clipboard`, com toast "Link copiado — envie ao cliente".
-- Renderizar, **acima da grade de botões de Sync**, uma nova linha com:
-  - Quando `!data?.connected`:
-    - Botão primário **"Autorizar Bling"** (gradient `var(--gradient-primary)`, ícone `Plug` + `ExternalLink`), `disabled={!data?.hasAppCreds || mLink.isPending}`.
-    - Botão outline **"Copiar Link"** (ícone `Copy`), mesmas regras de disabled.
-  - Quando `data?.connected`:
-    - Badge "Conectado — expira em {expiresAt}".
-    - Botão **"Desconectar"** outline destrutivo (ícone `Unplug`).
-- Aviso inline (texto pequeno âmbar) caso `!data?.hasAppCreds`: "Cadastre Client ID/Secret antes de autorizar".
+```
+Bling /estoques/saldos/14888850048 (400)
+{ "error": { "type": "VALIDATION_ERROR",
+  "message": "Não foi possível obter o saldo em estoque",
+  "description": "O saldo em estoque não pode ser obtido, pois nenhum produto foi informado." } }
+```
 
-### 2. Reativação automática dos botões de Sync
-Já implementado: `SyncBtn` e o "Sync FULL" usam `disabled={!data?.connected}` e a query tem `refetchInterval: 10000`. Após o callback gravar `bling_credentials`, o próximo refetch (≤10s) flipa `connected=true` e os botões ficam clicáveis. Sem alteração necessária aqui — apenas confirmar comportamento no QA.
+Conferindo `docs/bling-api-v3.md` (linhas 5995–6150), tanto `GET /estoques/saldos/{idDeposito}` quanto `GET /estoques/saldos` exigem o parâmetro **`idsProdutos[]` (query, array, obrigatório)**. Não existe paginação por `pagina/limite` neste endpoint — a "paginação" é feita pelo cliente, dividindo a lista de produtos em lotes.
 
-## Fora do escopo
-- Nenhuma mudança em server functions, RLS, migrations, sync ou criptografia.
-- Sem alteração na rota `/integracao-bling` (cliente final).
-- Diretiva READ-ONLY (sem POST/PUT/PATCH/DELETE em vendas/pedidos/NFe) preservada — `createBlingAuthLink` apenas grava `bling_oauth_states` e gera URL.
+A implementação atual (`src/lib/bling/sync.server.ts → syncStock`) chama `/estoques/saldos/{depId}` apenas com `pagina/limite`, sem `idsProdutos[]` — daí o 400.
 
-## Detalhes técnicos
-- `createBlingAuthLink` já aceita `tenantId` opcional e valida `assertTenantAccess` (superadmin passa). Reuso direto.
-- O `redirect_uri` continua sendo derivado do host atual (`integrador.tecsperts.com`) — então abrir a janela funciona tanto para o admin quanto para enviar o link ao cliente.
-- "Copiar Link" usa `navigator.clipboard.writeText`; fallback de erro mostra a URL em toast para cópia manual.
+## Mudanças (apenas leitura — respeita a diretriz READ-ONLY)
+
+### 1. `src/lib/bling/client.server.ts`
+Estender o tipo de `searchParams` em `blingFetch` para aceitar arrays e enviá-los como múltiplos pares `chave[]=valor`:
+
+```ts
+searchParams?: Record<string, string | number | Array<string | number> | undefined>
+```
+
+No loop de montagem da URL, quando o valor for array, usar `url.searchParams.append(`${k}[]`, String(v))` para cada item. Manter compatibilidade com os usos atuais (produtos/depósitos), que continuam passando escalares.
+
+### 2. `src/lib/bling/sync.server.ts → syncStock`
+Reescrever o loop:
+
+1. Carregar `bling_id` de **todos** os depósitos espelhados do tenant (já feito).
+2. Carregar `bling_id` de **todos os produtos** do tenant a partir de `bling_products` (`select bling_id`).
+3. Se não houver produtos, encerrar a run com `meta.note = "Sem produtos espelhados — rode sync de produtos primeiro."`.
+4. Para cada depósito, dividir a lista de produtos em **chunks de 100** (limite seguro de URL e padrão de loteamento na v3) e chamar:
+   ```
+   blingFetch(tenantId, `/estoques/saldos/${depId}`, {
+     searchParams: { idsProdutos: chunkOfBlingIds }
+   })
+   ```
+5. Mapear cada item retornado para `bling_stock_balances` (campos do retorno: `produto.id`, `saldoFisicoTotal`, `saldoVirtualTotal`) e fazer upsert com `onConflict: "tenant_id,produto_id,deposito_id"`. Atualmente o mapper usa `saldoFisico/saldoVirtual` — corrigir para os nomes reais do endpoint (`saldoFisicoTotal/saldoVirtualTotal`).
+6. Continuar usando `startRun/endRun` e acumulando `count`. Em caso de erro, propagar via `endRun(false, count, errMessage(e))` (já implementado).
+
+### 3. `docs/bling-api-v3.notes.md`
+Acrescentar uma nota curta sobre o endpoint de estoques: `idsProdutos[]` obrigatório, sem paginação, fazer chunks de 100 e iterar por depósito.
+
+## Fora de escopo
+
+- Nenhuma escrita em endpoints transacionais do Bling (somente GET).
+- Sem alterações em RLS, migrations, OAuth, rotas ou UI.
+- Sem mudanças no fluxo de produtos/depósitos.
+
+## Verificação
+
+Após o deploy, você clica em **Sync Estoque** no painel do cliente. Esperado: `status=ok`, `items_processed > 0` (≈ produtos com saldo × depósitos), e `bling_stock_balances` populada. Se o Bling retornar 400 novamente, o `error_message` agora dirá exatamente qual campo faltou.
