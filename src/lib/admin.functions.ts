@@ -217,3 +217,37 @@ export const upsertTenantSettings = createServerFn({ method: "POST" })
     if (error) throw new Response(error.message, { status: 400 });
     return { ok: true };
   });
+
+/** Persona padrão original (usada ao "Restaurar Padrão Original"). */
+export const ORIGINAL_GLOBAL_PERSONA = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts. Responda SEMPRE em PT-BR, de forma objetiva, profissional e consultiva. Use os dados retornados pelas ferramentas como verdade absoluta e nunca invente números.`;
+
+/** Lê as configurações globais (persona padrão da IA). Apenas superadmin. */
+export const getGlobalSettings = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertSuperadmin(context.userId);
+    const { data: row } = await supabaseAdmin
+      .from("global_settings")
+      .select("default_agent_persona, updated_at")
+      .eq("id", "global")
+      .maybeSingle();
+    return {
+      default_agent_persona: row?.default_agent_persona ?? ORIGINAL_GLOBAL_PERSONA,
+      updated_at: row?.updated_at ?? null,
+    };
+  });
+
+/** Atualiza a persona global da IA. Apenas superadmin. */
+export const upsertGlobalSettings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({ default_agent_persona: z.string().min(10).max(8000) }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await assertSuperadmin(context.userId);
+    const { error } = await supabaseAdmin
+      .from("global_settings")
+      .upsert({ id: "global", default_agent_persona: data.default_agent_persona.trim() }, { onConflict: "id" });
+    if (error) throw new Response(error.message, { status: 400 });
+    return { ok: true };
+  });
