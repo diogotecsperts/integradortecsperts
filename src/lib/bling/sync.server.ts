@@ -247,15 +247,115 @@ export async function syncOrders(
     mode,
     resumeRunId: opts?.resumeRunId,
     path: "/pedidos/vendas",
+    pagesPerBatch: ORDERS_PAGES_PER_BATCH,
     upsert: async (list) => {
       const rows = list.map(mapOrder(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_orders")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
+      // Itens: lista do Bling não traz `itens`; precisamos buscar detalhe.
+      await fetchAndUpsertOrderItems(tenantId, rows.map((r) => r.bling_id));
       return rows.length;
     },
   });
+}
+
+// =============== ORDER ITEMS ===============
+async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
+  if (orderIds.length === 0) return;
+  // 1) Apaga itens antigos desses pedidos para idempotência.
+  const { error: delErr } = await supabaseAdmin
+    .from("bling_order_items")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .in("order_bling_id", orderIds);
+  if (delErr) throw new Error(delErr.message);
+
+  const allRows: Array<Record<string, unknown>> = [];
+  for (const oid of orderIds) {
+    let detail: { data?: Record<string, unknown> };
+    try {
+      detail = await blingFetch<{ data?: Record<string, unknown> }>(
+        tenantId, `/pedidos/vendas/${oid}`,
+      );
+    } catch (e) {
+      // Erro pontual num pedido não derruba o batch — segue.
+      console.error(`[orders] detalhe ${oid} falhou:`, errMessage(e));
+      continue;
+    }
+    const itens = (detail?.data?.itens as Array<Record<string, unknown>>) ?? [];
+    for (const it of itens) {
+      const prod = (it.produto as Record<string, unknown>) ?? {};
+      const quantidade = Number(it.quantidade) || 0;
+      const preco = Number(it.valor) || 0;
+      allRows.push({
+        tenant_id: tenantId,
+        order_bling_id: oid,
+        bling_item_id: it.id ? Number(it.id) : null,
+        produto_id: prod.id ? Number(prod.id) : null,
+        codigo: (it.codigo as string) ?? (prod.codigo as string) ?? null,
+        descricao: (it.descricao as string) ?? null,
+        quantidade,
+        preco,
+        valor_total: quantidade * preco,
+        raw: it,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+  if (allRows.length > 0) {
+    const { error: insErr } = await supabaseAdmin
+      .from("bling_order_items")
+      .insert(allRows as never);
+    if (insErr) throw new Error(insErr.message);
+  }
+}
+
+// ===================== CONTATOS =====================
+export async function syncContacts(
+  tenantId: string,
+  mode: "full" | "incremental" = "full",
+  opts?: { resumeRunId?: string },
+): Promise<BatchResult> {
+  return runPaginatedBatch({
+    tenantId,
+    resource: "contacts",
+    mode,
+    resumeRunId: opts?.resumeRunId,
+    path: "/contatos",
+    upsert: async (list) => {
+      const rows = list.map(mapContact(tenantId));
+      const { error } = await supabaseAdmin
+        .from("bling_contacts")
+        .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
+      if (error) throw new Error(error.message);
+      return rows.length;
+    },
+  });
+}
+
+function mapContact(tenantId: string) {
+  return (c: Record<string, unknown>) => {
+    const end = (c.endereco as Record<string, unknown>) ?? null;
+    const geral = (end?.geral as Record<string, unknown>) ?? end ?? {};
+    return {
+      tenant_id: tenantId,
+      bling_id: Number(c.id),
+      nome: (c.nome as string) ?? null,
+      numero_documento: (c.numeroDocumento as string) ?? null,
+      tipo: (c.tipo as string) ?? null,
+      email: (c.email as string) ?? null,
+      telefone: (c.telefone as string) ?? (c.celular as string) ?? null,
+      cidade: (geral?.municipio as string) ?? null,
+      uf: (geral?.uf as string) ?? null,
+      cep: (geral?.cep as string) ?? null,
+      situacao: (c.situacao as string) ?? null,
+      raw: c,
+      bling_updated_at: (c.dataAlteracao as string) ?? null,
+      synced_at: new Date().toISOString(),
+    };
+  };
 }
 
 // ===================== Helper genérico de batching paginado =====================
