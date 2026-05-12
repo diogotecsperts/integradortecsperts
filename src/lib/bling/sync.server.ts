@@ -4,27 +4,70 @@ import { blingFetch, BlingError } from "./client.server";
 
 type Resource = "deposits" | "products" | "stock" | "orders";
 
-async function startRun(tenantId: string, resource: Resource, mode: string) {
+// Quantas páginas processamos por execução (batch). Mantém o tick curto e evita timeouts.
+const PAGES_PER_BATCH = 5;
+
+async function startRun(
+  tenantId: string,
+  resource: Resource,
+  mode: string,
+  meta?: object,
+) {
   const { data, error } = await supabaseAdmin
     .from("bling_sync_runs")
-    .insert({ tenant_id: tenantId, resource, mode, status: "running" })
+    .insert({
+      tenant_id: tenantId,
+      resource,
+      mode,
+      status: "running",
+      cursor_page: 0,
+      next_page: 1,
+      heartbeat_at: new Date().toISOString(),
+      meta: (meta ?? null) as never,
+    })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
   return data.id as string;
 }
-async function endRun(id: string, ok: boolean, items: number, errMsg?: string, meta?: object) {
+
+async function heartbeat(runId: string, page: number, items: number) {
   await supabaseAdmin
     .from("bling_sync_runs")
     .update({
-      status: ok ? "ok" : "error",
-      finished_at: new Date().toISOString(),
+      cursor_page: page,
+      heartbeat_at: new Date().toISOString(),
       items_processed: items,
-      error_message: errMsg ?? null,
-      meta: (meta ?? null) as never,
     })
-    .eq("id", id);
+    .eq("id", runId);
 }
+
+async function pauseRun(runId: string, nextPage: number, items: number) {
+  await supabaseAdmin
+    .from("bling_sync_runs")
+    .update({
+      next_page: nextPage,
+      items_processed: items,
+      heartbeat_at: new Date().toISOString(),
+    })
+    .eq("id", runId);
+}
+
+async function endRun(id: string, ok: boolean, items: number, errMsg?: string, meta?: object) {
+  const update: Record<string, unknown> = {
+    status: ok ? "ok" : "error",
+    finished_at: new Date().toISOString(),
+    items_processed: items,
+    error_message: errMsg ?? null,
+    next_page: null,
+    heartbeat_at: new Date().toISOString(),
+  };
+  if (meta !== undefined) update.meta = meta as never;
+  await supabaseAdmin.from("bling_sync_runs").update(update).eq("id", id);
+}
+
+type BatchResult = { ok: true; count: number; done: boolean; nextPage: number | null; runId: string };
+
 
 // ===================== DEPÓSITOS =====================
 export async function syncDeposits(tenantId: string) {
