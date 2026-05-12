@@ -176,3 +176,44 @@ function KpiCard({ title, value, icon: Icon }: { title: string; value: string; i
 function brl(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 }
+
+type Freshness = { resource: string; lastOkAt: string | null; ageSeconds: number | null; lastStatus: string | null; inProgress: boolean; nextPage: number | null };
+const RESOURCE_LABEL: Record<string, string> = { orders: "Pedidos", products: "Produtos", stock: "Estoque", deposits: "Depósitos" };
+
+function FreshnessBanner({ data, loading, onRefresh }: { data: Freshness[]; loading: boolean; onRefresh: () => void }) {
+  return (
+    <div className="glass rounded-2xl p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+          Frescor dos dados Bling
+          <span className="text-[10px] normal-case text-muted-foreground/60">(atualiza automaticamente a cada 20 min)</span>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-secondary"
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Atualizar
+        </button>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {data.map((f) => (
+          <div key={f.resource} className="rounded-lg border border-border/60 bg-card/40 px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{RESOURCE_LABEL[f.resource] ?? f.resource}</div>
+            <div className="mt-0.5 flex items-center gap-2">
+              <span className="text-sm font-semibold">{f.lastOkAt ? formatRelative(f.lastOkAt) : "nunca"}</span>
+              {f.inProgress && (
+                <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" /> em andamento
+                </span>
+              )}
+              {!f.inProgress && f.lastStatus === "error" && (
+                <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-destructive">erro</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
