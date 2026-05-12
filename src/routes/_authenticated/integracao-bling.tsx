@@ -5,6 +5,7 @@ import { Plug, RefreshCw, Unplug, Boxes, Warehouse, BarChart3, Loader2, External
 import { toast } from "sonner";
 import { createBlingAuthLink, disconnectBling, getBlingStatus } from "@/lib/bling.functions";
 import { useAuth } from "@/hooks/use-auth";
+import { formatRelative } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/integracao-bling")({
   component: IntegracaoBlingPage,
