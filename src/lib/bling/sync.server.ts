@@ -285,7 +285,7 @@ async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
       );
     } catch (e) {
       // Erro pontual num pedido não derruba o batch — segue.
-      console.error(`[orders] detalhe ${oid} falhou:`, errMessage(e));
+      console.warn(`[bling-sync] tenant=${tenantId} resource=orders item-detail-fail order=${oid} err=${errMessage(e)}`);
       continue;
     }
     const itens = (detail?.data?.itens as Array<Record<string, unknown>>) ?? [];
