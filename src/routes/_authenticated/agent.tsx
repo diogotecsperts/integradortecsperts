@@ -193,15 +193,13 @@ function AgentPage() {
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div className="flex items-center gap-2">
-            <SheetTrigger asChild>
-              <button
-                onClick={() => setMobileOpen(true)}
-                className="glass grid h-9 w-9 place-items-center rounded-lg md:hidden"
-                aria-label="Abrir conversas"
-              >
-                <Menu className="h-4 w-4" />
-              </button>
-            </SheetTrigger>
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="glass grid h-9 w-9 place-items-center rounded-lg md:hidden"
+              aria-label="Abrir conversas"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Agente IA</h1>
               <p className="mt-1 text-sm text-muted-foreground">Especialista em BI/ERP — consulta seus dados reais do Bling.</p>
