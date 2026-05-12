@@ -478,8 +478,17 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <SyncBtn label="Pedidos (full)" onClick={() => m.mutate({ resource: "orders", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Pedidos (incr.)" onClick={() => m.mutate({ resource: "orders", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
       </div>
+      <FullSyncBanner lastRuns={data?.lastRuns ?? []} />
       <button type="button" disabled={m.isPending || !data?.connected}
-        onClick={() => m.mutate({ resource: "all" })}
+        onClick={() => {
+          const ok = window.confirm(
+            "Sync FULL pode levar vários minutos (ou horas) dependendo do volume.\n\n" +
+            "• NÃO feche esta aba enquanto o botão estiver carregando.\n" +
+            "• Se você fechar, o request é abortado e a run morre no meio.\n\n" +
+            "Deseja continuar?"
+          );
+          if (ok) m.mutate({ resource: "all" });
+        }}
         className="w-full rounded-md border border-primary/40 bg-primary/10 py-2 text-xs font-medium text-primary disabled:opacity-50">
         <RefreshCw className="mr-1 inline h-3 w-3" /> Sync FULL (tudo)
       </button>
@@ -525,6 +534,35 @@ function SyncBtn({ label, onClick, loading, disabled }: { label: string; onClick
       className="rounded-md border border-border px-2 py-1.5 text-xs hover:bg-secondary disabled:opacity-50">
       {label}
     </button>
+  );
+}
+
+type RunRow = {
+  id: string;
+  resource: string;
+  status: string;
+  next_page: number | null;
+  heartbeat_at: string | null;
+  started_at: string;
+};
+
+function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
+  const running = lastRuns.find((r) => r.status === "running" && r.next_page != null);
+  const [, force] = React.useReducer((x: number) => x + 1, 0);
+  React.useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => force(), 5000);
+    return () => clearInterval(t);
+  }, [running]);
+  if (!running) return null;
+  const ref = running.heartbeat_at ?? running.started_at;
+  const ageSec = Math.max(0, Math.floor((Date.now() - new Date(ref).getTime()) / 1000));
+  const stale = ageSec > 60;
+  return (
+    <div className={`rounded-md border px-2 py-1.5 text-[11px] ${stale ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-amber-500/30 bg-amber-500/5 text-amber-300"}`}>
+      ⚠ Sync em andamento ({RES_LABEL[running.resource] ?? running.resource}, página {running.next_page}). Não feche esta aba.
+      <div className="mt-0.5 opacity-80">Último heartbeat: {ageSec}s atrás{stale ? " — possivelmente travado" : ""}.</div>
+    </div>
   );
 }
 

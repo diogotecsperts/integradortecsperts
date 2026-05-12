@@ -16,15 +16,28 @@ export class BlingError extends Error {
   }
 }
 
-// ============ Throttle simples (3 req/s) por tenant ============
+// ============ Throttle por tenant (fila assíncrona, ~3.8 req/s) ============
+// Fila por tenant: serializa as chamadas concorrentes (Promise.all) para que
+// o intervalo mínimo entre requisições seja respeitado mesmo com paralelismo.
 const lastCall = new Map<string, number>();
+const tenantQueues = new Map<string, Promise<void>>();
 const MIN_INTERVAL_MS = 260; // ~3.8 req/s, abaixo do limite de 4 req/s do Bling
 async function throttle(tenantId: string) {
-  const now = Date.now();
-  const last = lastCall.get(tenantId) ?? 0;
-  const wait = Math.max(0, last + MIN_INTERVAL_MS - now);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastCall.set(tenantId, Date.now());
+  const prev = tenantQueues.get(tenantId) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((r) => { release = r; });
+  // Encadeia esta espera depois de todas as anteriores deste tenant.
+  tenantQueues.set(tenantId, prev.then(() => next));
+  try {
+    await prev;
+    const now = Date.now();
+    const last = lastCall.get(tenantId) ?? 0;
+    const wait = Math.max(0, last + MIN_INTERVAL_MS - now);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastCall.set(tenantId, Date.now());
+  } finally {
+    release();
+  }
 }
 
 // ============ Credenciais do app (client_id / client_secret) ============
