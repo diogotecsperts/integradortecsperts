@@ -340,8 +340,9 @@ export const chatWithAgent = createServerFn({ method: "POST" })
     if (!tenantId) throw new Response("Sem tenant associado.", { status: 400 });
 
     const { data: settings } = await supabaseAdmin
-      .from("tenant_settings").select("minimax_api_key").eq("tenant_id", tenantId).maybeSingle();
+      .from("tenant_settings").select("minimax_api_key, agent_system_prompt").eq("tenant_id", tenantId).maybeSingle();
     const apiKey = settings?.minimax_api_key;
+    const customPersona = settings?.agent_system_prompt ?? null;
     if (!apiKey) throw new Response("Chave Minimax não configurada para este tenant.", { status: 400 });
 
     // Conversa
