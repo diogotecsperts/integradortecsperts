@@ -238,7 +238,7 @@ async function execTool(name: string, args: Record<string, unknown>, tenantId: s
       const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
       const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
       const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
-      const groupBy = ((args.group_by as string) ?? "none") as "none" | "day" | "month" | "situacao";
+      const groupBy = ((args.group_by as string) ?? "none") as "none" | "day" | "month" | "situacao" | "product";
 
       const { data: agg, error: aggErr } = await supabaseAdmin.rpc("agent_summarize_sales", {
         _tenant_id: tenantId, _from: from, _to: to, _group_by: groupBy,
@@ -295,6 +295,47 @@ async function execTool(name: string, args: Record<string, unknown>, tenantId: s
           saldo_total: Number(r.saldo_total),
           codigo: r.codigo,
           nome: r.nome,
+        })),
+      };
+    }
+    case "get_top_products": {
+      const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
+      const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
+      const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
+      const limit = Math.min(Number(args.limit ?? 10), 50);
+      const { data, error } = await supabaseAdmin.rpc("agent_top_products", {
+        _tenant_id: tenantId, _from: from, _to: to, _limit: limit,
+      });
+      if (error) return { error: error.message };
+      const rows = (data ?? []) as Array<{ produto_id: number; codigo: string | null; nome: string | null; qtd_total: number | string; faturamento: number | string; pedidos_count: number | string }>;
+      return {
+        from, to,
+        results: rows.map((r) => ({
+          produto_id: r.produto_id,
+          codigo: r.codigo,
+          nome: r.nome,
+          qtd_total: Number(r.qtd_total),
+          faturamento: Number(r.faturamento),
+          pedidos_count: Number(r.pedidos_count),
+        })),
+      };
+    }
+    case "get_sales_by_region": {
+      const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
+      const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
+      const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
+      const { data, error } = await supabaseAdmin.rpc("agent_sales_by_region", {
+        _tenant_id: tenantId, _from: from, _to: to,
+      });
+      if (error) return { error: error.message };
+      const rows = (data ?? []) as Array<{ uf: string; total: number | string; cnt: number | string; customers: number | string }>;
+      return {
+        from, to,
+        regions: rows.map((r) => ({
+          uf: r.uf,
+          total: Number(r.total),
+          cnt: Number(r.cnt),
+          customers: Number(r.customers),
         })),
       };
     }
