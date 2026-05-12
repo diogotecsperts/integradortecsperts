@@ -1,85 +1,56 @@
-## Objetivo
-Dar à IA visão detalhada de **PRODUTOS** (itens de pedido) e **CLIENTES** (contatos com geo), habilitando análises de top-sellers, faturamento por UF e cruzamento produto×venda. Reaproveita o padrão de batching paginado já em uso para `orders`/`products`.
+# Plano: Sync Bling Resiliente (anti-timeout)
 
-## 1. Banco de dados (migration)
+## Diagnóstico
 
-### Tabela `bling_order_items`
-- `id uuid pk default gen_random_uuid()`
-- `tenant_id uuid not null`
-- `order_bling_id bigint not null` (referencia `bling_orders.bling_id` lógico, sem FK cross-tenant rígida — usar (tenant_id, order_bling_id))
-- `bling_item_id bigint` (id do item retornado pelo Bling, quando houver)
-- `produto_id bigint` (bling_id do produto)
-- `codigo text`, `descricao text`
-- `quantidade numeric not null default 0`
-- `preco numeric not null default 0` (preço unitário)
-- `valor_total numeric` (qtd × preço)
-- `raw jsonb not null default '{}'`
-- `synced_at timestamptz not null default now()`
-- Unique: `(tenant_id, order_bling_id, bling_item_id)` quando `bling_item_id` presente; índice secundário `(tenant_id, produto_id)`, `(tenant_id, order_bling_id)`.
-- RLS: `select` para `is_superadmin() OR tenant_id = get_user_tenant(auth.uid())`. Sem insert/update/delete pelo cliente (gravação só via service role).
+O timeout vem do `syncOrders`: cada página retorna 100 pedidos e cada pedido faz um GET de detalhe (`/pedidos/vendas/{id}`) com throttle de 260ms. 100 × 0,26s ≈ 26s, perigosamente perto do limite de 30s do Worker. Hoje `ORDERS_PAGES_PER_BATCH=1`, mas o problema real é o **tamanho da página**, não o número de páginas.
 
-### Tabela `bling_contacts`
-- `id uuid pk default gen_random_uuid()`
-- `tenant_id uuid not null`
-- `bling_id bigint not null`
-- `nome text`, `numero_documento text`, `tipo text` (`F`/`J`), `email text`, `telefone text`
-- `cidade text`, `uf text`, `cep text`
-- `situacao text`
-- `raw jsonb not null default '{}'`
-- `bling_updated_at timestamptz`, `synced_at timestamptz default now()`
-- Unique: `(tenant_id, bling_id)`. Índice em `(tenant_id, uf)`.
-- RLS idêntica a `bling_contacts_select` (mesmo padrão das outras tabelas Bling).
+Além disso, hoje no `bling-sync-tick.tsx`, se um recurso (ex.: orders) lança exceção dentro do bloco `try` do tenant, o `catch` externo aborta os recursos seguintes (products/contacts) — sem isolamento por recurso.
 
-> Não usamos FK cruzando tenants — seguimos o mesmo padrão de "espelho" das tabelas Bling existentes (chaves lógicas via `tenant_id + bling_id`).
+## 1) `src/lib/bling/sync.server.ts`
 
-### RPCs novas (SECURITY DEFINER, search_path = public, filtro `_tenant_id`)
+- Adicionar parâmetro opcional `pageLimit` em `runPaginatedBatch` (default 100).
+- Em `syncOrders`, passar `pageLimit: 20` e manter `pagesPerBatch: 1`. Resultado: ≤20 detalhes por execução (~5–7s), bem dentro do limite.
+- Continuar respeitando o throttle global de ~3,8 req/s já implementado em `client.server.ts` (não alterar).
+- Adicionar `console.log` curto após cada upsert bem-sucedido em cada `upsert(...)` (orders/products/contacts), incluindo `tenant_id`, `resource`, `page`, `count` e `items_processed_total`. Isso aparece no painel de logs do servidor.
+- Em `fetchAndUpsertOrderItems`, logar warning quando um detalhe individual falha (já existe `console.error` — manter, mas padronizar prefixo `[bling-sync]`).
+- Garantir que `endRun(..., false, count, errMessage(e), ...)` recebe a string completa (`BlingError` já serializa `body` truncado em 500 chars). Verificar que nenhuma camada acima engole o erro antes do `endRun`.
 
-- **`agent_top_products(_tenant_id uuid, _from date, _to date, _limit int default 10)`** → join `bling_order_items` × `bling_orders` por `(tenant_id, order_bling_id = o.bling_id)` filtrando `o.data BETWEEN _from AND _to`, agrupando por `produto_id` → retorna `produto_id, codigo, nome, qtd_total, faturamento, pedidos_count` ordenado por `qtd_total DESC`.
-- **`agent_sales_by_region(_tenant_id uuid, _from date, _to date)`** → join `bling_orders` × `bling_contacts` por `(tenant_id, cliente_id = c.bling_id)`, agrega por `c.uf` → `uf, total, cnt, customers` ordenado por `total DESC`.
-- **`agent_summarize_sales`**: adicionar branch `_group_by = 'product'` que delega a `agent_top_products` (mesma assinatura de saída adaptada: `group_key = nome|codigo, total = faturamento, cnt = qtd_total, customers = pedidos_count`).
+## 2) `src/routes/api/public/hooks/bling-sync-tick.tsx`
 
-## 2. Ingestão (`src/lib/bling/sync.server.ts`)
+- Refatorar o loop interno por recurso para que cada `await fn(...)` esteja em **seu próprio** `try/catch`, gravando `tenantOut[`${resource}_error`]` e seguindo para o próximo recurso. Hoje só `stock` e `deposits` têm catch isolado; `orders/products/contacts` compartilham o `try` externo.
+- Após cada chamada bem-sucedida, `console.log("[bling-sync-tick] tenant=… resource=… done=… count=… nextPage=…")`.
+- Manter o reaper e a checagem de `pending` resume.
 
-### `syncOrders` — gravar itens
-Após o `upsert` em `bling_orders`, no mesmo callback `upsert`:
-- Coletar `o.itens` (array do raw Bling) por pedido.
-- Para cada item: mapear `{ tenant_id, order_bling_id: o.id, bling_item_id: it.id ?? null, produto_id: it.produto?.id ?? null, codigo: it.codigo, descricao: it.descricao, quantidade, valor (preço unit.), valor_total: qtd*valor, raw: it, synced_at }`.
-- Estratégia de upsert idempotente: para cada pedido do batch, **deletar `bling_order_items` onde `(tenant_id, order_bling_id)` está no batch** e em seguida `insert` em massa. Isso evita conflito quando itens são removidos no Bling. Operação faz parte do mesmo tick — sem alterar `PAGES_PER_BATCH` (5).
+## 3) Verificação de Integridade (`bling_sync_runs`)
 
-> Verificar antes da implementação se `/pedidos/vendas` (lista) já retorna `itens` no payload da página. Se vier vazio na lista (Bling costuma só popular itens em `/pedidos/vendas/{id}`), **fazer fallback**: para cada pedido sem itens, chamar `GET /pedidos/vendas/{id}` (respeitando o throttle 3 req/s). Para manter o tick curto, esse fallback fica condicionado a `PAGES_PER_BATCH=5` × `100 pedidos/página` = até 500 chamadas extras/tick — se isso ficar pesado, baixamos o batch para `2` páginas só na rota orders. Decisão final fica no código após inspecionar o payload em runtime; o plano cobre os dois caminhos.
+- Auditoria rápida do fluxo de erro:
+  - `runPaginatedBatch` já chama `endRun(runId, false, count, errMessage(e), …)` no catch — confirmar que `errMessage` inclui status + body do `BlingError`.
+  - `syncDeposits` e `syncStock` idem.
+  - O painel `integracao-bling.tsx` já lê `error_message` da última run — sem mudança necessária, mas validar visualmente após a refatoração.
+- Adicionar pequeno hardening: truncar `error_message` em 1000 chars antes de gravar (evita payloads enormes em casos de HTML 502).
 
-### `syncContacts` (novo)
-- Reutiliza `runPaginatedBatch` com `path = "/contatos"`, `resource: "contacts"` (adicionar `"contacts"` ao tipo `Resource`).
-- Suporta `full` e `incremental` via `dataAlteracaoInicial` (mesmo padrão de products/orders).
-- Mapear: `bling_id, nome, numeroDocumento, tipo, email, telefone, endereco.geral.{municipio, uf, cep}, situacao, dataAlteracao, raw`. Upsert em `bling_contacts` por `(tenant_id, bling_id)`.
+## Detalhes técnicos
 
-### Cron tick (`src/routes/api/public/hooks/bling-sync-tick.tsx`)
-Adicionar `"contacts"` ao loop de retomada/disparo incremental, ao lado de `orders` e `products`. Stock e deposits permanecem como estão.
+```text
+runPaginatedBatch(args)
+  args.pageLimit ?? 100
+  searchParams: { pagina, limite: pageLimit, dataAlteracaoInicial }
+  break-condition: list.length < pageLimit  (não mais < 100 hardcoded)
 
-## 3. Ferramentas da IA (`src/lib/agent.functions.ts`)
+syncOrders → runPaginatedBatch({ ..., pagesPerBatch: 1, pageLimit: 20 })
+```
 
-### Novas tools
-- **`get_top_products({ from?, to?, limit? })`** → `agent_top_products`. Defaults: últimos 30 dias, `limit=10`. Retorna `{ from, to, results: [{produto_id, codigo, nome, qtd_total, faturamento, pedidos_count}] }`.
-- **`get_sales_by_region({ from?, to? })`** → `agent_sales_by_region`. Retorna `{ from, to, regions: [{uf, total, cnt, customers}] }`.
-
-### Atualizar `summarize_sales`
-- Adicionar `"product"` ao enum `group_by`. Quando `group_by="product"`, chama `agent_summarize_sales` com `_group_by='product'` (que internamente usa `agent_top_products`). Mantém formato `{ from, to, total, count, customers, ticket_medio, groups }` para a UI/markdown não quebrar.
-- Atualizar descrição da tool: "Use `group_by='product'` quando o usuário perguntar sobre produtos mais vendidos / ranking / top produtos".
-
-### Diretrizes do system prompt
-Acrescentar uma linha em `buildFormattingRules`: "Para perguntas sobre **produtos vendidos** prefira `get_top_products`; para **regiões/estados** use `get_sales_by_region`."
-
-## Arquivos
-
-- **Migration nova**: `bling_order_items`, `bling_contacts` (+ RLS + índices), RPCs `agent_top_products`, `agent_sales_by_region`, atualização de `agent_summarize_sales`.
-- **Editado**: `src/lib/bling/sync.server.ts` — gravação de itens em `syncOrders`, novo `syncContacts`, `Resource` inclui `"contacts"`.
-- **Editado**: `src/routes/api/public/hooks/bling-sync-tick.tsx` — incluir `contacts` no loop de retomada/incremental.
-- **Editado**: `src/lib/bling.functions.ts` — expor `syncContacts` para disparo manual na tela de Integração Bling (mesmo botão padrão).
-- **Editado**: `src/routes/_authenticated/integracao-bling.tsx` — adicionar card/botão "Sincronizar Contatos" e mostrar status do recurso `contacts`.
-- **Editado**: `src/lib/agent.functions.ts` — 2 tools novas, branch `product` em `summarize_sales`, hint no system prompt.
+Logs propostos (prefixo `[bling-sync]`):
+- `tenant=<uuid> resource=orders page=<n> upserted=<k> total=<count>`
+- `tenant=<uuid> resource=orders item-detail-fail order=<id> err=<msg>`
 
 ## Fora de escopo
-- UI de listagem de itens/contatos (apenas backend + IA).
-- Sincronização de variações de produto, depósito por item, NF-e.
-- Métricas de margem/custo (Bling não expõe custo em `/pedidos/vendas`).
-- Cache cross-tenant das RPCs.
+
+- Mudar throttle ou ativar paralelismo de detalhes (manteria risco de 429).
+- Backfill em background workers / queue.
+- UI nova; só reaproveita o painel atual.
+
+## Arquivos editados
+
+- `src/lib/bling/sync.server.ts`
+- `src/routes/api/public/hooks/bling-sync-tick.tsx`
