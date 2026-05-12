@@ -94,6 +94,10 @@ function Dashboard() {
         </div>
       )}
 
+      {blingStatusQ.data?.freshness && (
+        <FreshnessBanner data={blingStatusQ.data.freshness} loading={blingStatusQ.isFetching} onRefresh={() => blingStatusQ.refetch()} />
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard title="Vendas" value={brl(totals.sales)} icon={DollarSign} />
         <KpiCard title="Pedidos" value={totals.orders.toLocaleString("pt-BR")} icon={ShoppingCart} />
