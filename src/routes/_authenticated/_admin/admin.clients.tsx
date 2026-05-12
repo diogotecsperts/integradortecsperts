@@ -484,16 +484,36 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <RefreshCw className="mr-1 inline h-3 w-3" /> Sync FULL (tudo)
       </button>
       {data?.lastRuns && data.lastRuns.length > 0 && (
-        <div className="max-h-40 space-y-1 overflow-auto text-[11px]">
-          {data.lastRuns.slice(0, 8).map((r) => (
-            <div key={r.id} className="flex items-center justify-between gap-2 border-t border-border/40 pt-1">
-              <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
-              <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
-              <span className="text-muted-foreground">{r.items_processed} itens</span>
-              <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
-            </div>
-          ))}
-        </div>
+        <TooltipProvider delayDuration={150}>
+          <div className="max-h-56 space-y-1 overflow-auto text-[11px]">
+            {data.lastRuns.slice(0, 8).map((r) => (
+              <div key={r.id} className="border-t border-border/40 pt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
+                  {r.status === "error" && r.error_message ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-help text-destructive underline decoration-dotted">{r.status}</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
+                        {r.error_message}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
+                  )}
+                  <span className="text-muted-foreground">{r.items_processed} itens</span>
+                  <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
+                </div>
+                {r.status === "error" && r.error_message && (
+                  <div className="mt-0.5 truncate text-[10px] text-destructive/80" title={r.error_message}>
+                    {r.error_message}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </TooltipProvider>
       )}
     </div>
   );

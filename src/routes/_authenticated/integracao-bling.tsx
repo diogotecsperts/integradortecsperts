@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { createBlingAuthLink, disconnectBling, getBlingStatus } from "@/lib/bling.functions";
 import { useAuth } from "@/hooks/use-auth";
 import { formatRelative } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export const Route = createFileRoute("/_authenticated/integracao-bling")({
   component: IntegracaoBlingPage,
@@ -233,7 +234,20 @@ function ClientView() {
                   <td><RunStatus status={r.status} /></td>
                   <td className="text-xs text-muted-foreground">{new Date(r.started_at).toLocaleString("pt-BR")}</td>
                   <td>{r.items_processed}</td>
-                  <td className="max-w-[24rem] truncate text-xs text-muted-foreground" title={r.error_message ?? ""}>{r.error_message ?? "—"}</td>
+                  <td className="max-w-[24rem] text-xs text-muted-foreground">
+                    {r.error_message ? (
+                      <TooltipProvider delayDuration={150}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="block cursor-help truncate text-destructive/90" title={r.error_message}>{r.error_message}</span>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
+                            {r.error_message}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
