@@ -369,6 +369,14 @@ function AgentPromptField({ value, onChange }: { value: string; onChange: (v: st
   );
 }
 
+const RES_LABEL: Record<string, string> = {
+  contacts: "Contatos",
+  orders: "Pedidos",
+  products: "Produtos",
+  stock: "Estoque",
+  deposits: "Depósitos",
+};
+
 function BlingAdminPanel({ tenantId }: { tenantId: string }) {
   const status = useServerFn(getBlingStatus);
   const sync = useServerFn(runBlingSync);
