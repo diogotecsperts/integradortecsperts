@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { BLING_OAUTH_AUTHORIZE, getCredentialStatus } from "@/lib/bling/client.server";
-import { syncDeposits, syncProducts, syncStock, syncOrders } from "@/lib/bling/sync.server";
+import { syncDeposits, syncProducts, syncStock, syncOrders, syncContacts } from "@/lib/bling/sync.server";
 
 async function getProfile(userId: string) {
   const { data } = await supabaseAdmin
@@ -169,7 +169,7 @@ export const runBlingSync = createServerFn({ method: "POST" })
   .inputValidator((d) =>
     z.object({
       tenantId: z.string().uuid(),
-      resource: z.enum(["deposits", "products", "stock", "orders", "all"]),
+      resource: z.enum(["deposits", "products", "stock", "orders", "contacts", "all"]),
       mode: z.enum(["full", "incremental"]).default("full"),
       untilDone: z.boolean().default(false),
       maxBatches: z.number().int().min(1).max(20).default(6),
@@ -190,6 +190,9 @@ export const runBlingSync = createServerFn({ method: "POST" })
       }
       if (data.resource === "orders" || data.resource === "all") {
         out.orders = await runUntil(syncOrders, data.tenantId, data.mode, data.untilDone, data.maxBatches);
+      }
+      if (data.resource === "contacts" || data.resource === "all") {
+        out.contacts = await runUntil(syncContacts, data.tenantId, data.mode, data.untilDone, data.maxBatches);
       }
       return { ok: true, ...out };
     } catch (e) {
