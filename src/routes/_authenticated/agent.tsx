@@ -20,10 +20,22 @@ type Msg = { id: string; role: "user" | "assistant"; content: string };
 
 function cleanAssistant(text: string): string {
   if (!text) return text;
-  return text
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/<\/?think>/gi, "")
-    .trim();
+  let out = text;
+  // Raciocínio interno
+  out = out.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, "");
+  out = out.replace(/<(think|thinking|reasoning)>[\s\S]*$/i, "");
+  out = out.replace(/<\/(think|thinking|reasoning)>/gi, "");
+  // Artefatos tool_call e tokens MiniMax
+  out = out.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  out = out.replace(/<\/?tool_call>/gi, "");
+  out = out.replace(/<\|[^|]*\|>/g, "");
+  // \n literal escapado
+  out = out.replace(/\\n/g, "\n");
+  // Linha em branco antes/depois de tabelas
+  out = out.replace(/([^\n])\n(\|[^\n]+\|)/g, "$1\n\n$2");
+  out = out.replace(/(\|[^\n]+\|)\n([^\n|])/g, "$1\n\n$2");
+  out = out.replace(/\n{3,}/g, "\n\n");
+  return out.trim();
 }
 
 const SUGGESTIONS = [
