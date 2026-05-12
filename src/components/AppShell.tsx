@@ -3,7 +3,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Sparkles, LayoutDashboard, Bot, LogOut, Building2,
-  ShieldCheck, Menu, Plug,
+  ShieldCheck, Menu, Plug, Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,7 @@ const clientNav: NavItem[] = [
 const adminNav: NavItem[] = [
   { to: "/admin", label: "Visão geral", icon: LayoutDashboard },
   { to: "/admin/clients", label: "Clientes", icon: Building2 },
+  { to: "/admin/settings", label: "Configurações", icon: Settings },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
