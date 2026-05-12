@@ -270,19 +270,21 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
   if (isLoading) return <div className="grid h-32 place-items-center"><Loader2 className="h-5 w-5 animate-spin" /></div>;
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); m.mutate(form); }} className="space-y-4">
-      <div className="space-y-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling ERP</div>
-        <Input label="Client ID" value={form.bling_client_id} onChange={(v) => setForm({ ...form, bling_client_id: v })} />
-        <SecretInput label="Client Secret" value={form.bling_client_secret} onChange={(v) => setForm({ ...form, bling_client_secret: v })} />
-      </div>
-      <div className="space-y-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resend</div>
-        <SecretInput label="API Key" value={form.resend_api_key} onChange={(v) => setForm({ ...form, resend_api_key: v })} />
-      </div>
-      <div className="space-y-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
-        <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
+    <form onSubmit={(e) => { e.preventDefault(); m.mutate(form); }} className="space-y-6">
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-3 rounded-xl border border-border/60 p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling ERP</div>
+          <Input label="Client ID" value={form.bling_client_id} onChange={(v) => setForm({ ...form, bling_client_id: v })} />
+          <SecretInput label="Client Secret" value={form.bling_client_secret} onChange={(v) => setForm({ ...form, bling_client_secret: v })} />
+        </div>
+        <div className="space-y-3 rounded-xl border border-border/60 p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resend</div>
+          <SecretInput label="API Key" value={form.resend_api_key} onChange={(v) => setForm({ ...form, resend_api_key: v })} />
+        </div>
+        <div className="space-y-3 rounded-xl border border-border/60 p-4 md:col-span-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
+          <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
+        </div>
       </div>
       <AgentPromptField
         value={form.agent_system_prompt}
