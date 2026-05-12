@@ -8,8 +8,10 @@ type Resource = "deposits" | "products" | "stock" | "orders" | "contacts";
 const PAGES_PER_BATCH = 5;
 // Pedidos exigem detail-fetch por item — mais pesado, então menos páginas por tick.
 const ORDERS_PAGES_PER_BATCH = 1;
-// Tamanho da página de pedidos: 20 itens × ~260ms throttle ≈ 5–7s, bem dentro do limite de 30s.
-const ORDERS_PAGE_LIMIT = 20;
+// Tamanho da página de pedidos: 40 itens × paralelismo 3 ≈ 4s, bem dentro do limite de 30s.
+const ORDERS_PAGE_LIMIT = 40;
+// Quantos detail-fetches de pedidos rodam em paralelo (o throttle do client serializa em ~260ms).
+const ORDER_ITEMS_CONCURRENCY = 3;
 
 async function startRun(
   tenantId: string,
@@ -277,35 +279,40 @@ async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
   if (delErr) throw new Error(delErr.message);
 
   const allRows: Array<Record<string, unknown>> = [];
-  for (const oid of orderIds) {
-    let detail: { data?: Record<string, unknown> };
-    try {
-      detail = await blingFetch<{ data?: Record<string, unknown> }>(
-        tenantId, `/pedidos/vendas/${oid}`,
-      );
-    } catch (e) {
-      // Erro pontual num pedido não derruba o batch — segue.
-      console.warn(`[bling-sync] tenant=${tenantId} resource=orders item-detail-fail order=${oid} err=${errMessage(e)}`);
-      continue;
-    }
-    const itens = (detail?.data?.itens as Array<Record<string, unknown>>) ?? [];
-    for (const it of itens) {
-      const prod = (it.produto as Record<string, unknown>) ?? {};
-      const quantidade = Number(it.quantidade) || 0;
-      const preco = Number(it.valor) || 0;
-      allRows.push({
-        tenant_id: tenantId,
-        order_bling_id: oid,
-        bling_item_id: it.id ? Number(it.id) : null,
-        produto_id: prod.id ? Number(prod.id) : null,
-        codigo: (it.codigo as string) ?? (prod.codigo as string) ?? null,
-        descricao: (it.descricao as string) ?? null,
-        quantidade,
-        preco,
-        valor_total: quantidade * preco,
-        raw: it,
-        synced_at: new Date().toISOString(),
-      });
+  // Paralelismo limitado: dispara N detail-fetches simultâneos, mas o throttle
+  // por tenant garante que a saída para o Bling ainda fique abaixo de 4 req/s.
+  for (let i = 0; i < orderIds.length; i += ORDER_ITEMS_CONCURRENCY) {
+    const slice = orderIds.slice(i, i + ORDER_ITEMS_CONCURRENCY);
+    const results = await Promise.all(slice.map(async (oid) => {
+      try {
+        const detail = await blingFetch<{ data?: Record<string, unknown> }>(
+          tenantId, `/pedidos/vendas/${oid}`,
+        );
+        return { oid, itens: (detail?.data?.itens as Array<Record<string, unknown>>) ?? [] };
+      } catch (e) {
+        console.warn(`[bling-sync] tenant=${tenantId} resource=orders item-detail-fail order=${oid} err=${errMessage(e)}`);
+        return { oid, itens: [] as Array<Record<string, unknown>> };
+      }
+    }));
+    for (const { oid, itens } of results) {
+      for (const it of itens) {
+        const prod = (it.produto as Record<string, unknown>) ?? {};
+        const quantidade = Number(it.quantidade) || 0;
+        const preco = Number(it.valor) || 0;
+        allRows.push({
+          tenant_id: tenantId,
+          order_bling_id: oid,
+          bling_item_id: it.id ? Number(it.id) : null,
+          produto_id: prod.id ? Number(prod.id) : null,
+          codigo: (it.codigo as string) ?? (prod.codigo as string) ?? null,
+          descricao: (it.descricao as string) ?? null,
+          quantidade,
+          preco,
+          valor_total: quantidade * preco,
+          raw: it,
+          synced_at: new Date().toISOString(),
+        });
+      }
     }
   }
   if (allRows.length > 0) {
@@ -415,6 +422,17 @@ async function runPaginatedBatch(args: {
     pagina = 1;
   }
 
+  // Heartbeat ticker: garante que `heartbeat_at` é atualizado a cada 30s
+  // mesmo que o detail-fetch de pedidos passe muito tempo sem upsert.
+  // Sem isso, o reaper marca a run como `error` em runs longas.
+  const hbTimer = setInterval(() => {
+    void supabaseAdmin
+      .from("bling_sync_runs")
+      .update({ heartbeat_at: new Date().toISOString(), items_processed: count })
+      .eq("id", runId)
+      .then(() => undefined);
+  }, 30_000);
+
   try {
     for (let i = 0; i < pagesPerBatch; i++) {
       const tFetch0 = Date.now();
@@ -448,6 +466,8 @@ async function runPaginatedBatch(args: {
     console.error(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} ERROR: ${msg}`);
     await endRun(runId, false, count, msg, { mode, dataAlteracaoInicial, failedPage: pagina, failedAfterCount: count });
     throw e;
+  } finally {
+    clearInterval(hbTimer);
   }
 }
 
