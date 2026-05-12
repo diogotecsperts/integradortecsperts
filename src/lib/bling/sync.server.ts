@@ -379,9 +379,11 @@ async function runPaginatedBatch(args: {
   mode: "full" | "incremental";
   resumeRunId?: string;
   path: string;
+  pagesPerBatch?: number;
   upsert: (list: Array<Record<string, unknown>>) => Promise<number>;
 }): Promise<BatchResult> {
   const { tenantId, resource, mode, path, upsert } = args;
+  const pagesPerBatch = args.pagesPerBatch ?? PAGES_PER_BATCH;
   let runId: string;
   let pagina: number;
   let count = 0;
@@ -408,7 +410,7 @@ async function runPaginatedBatch(args: {
   }
 
   try {
-    for (let i = 0; i < PAGES_PER_BATCH; i++) {
+    for (let i = 0; i < pagesPerBatch; i++) {
       const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
         tenantId, path,
         { searchParams: { pagina, limite: 100, dataAlteracaoInicial } },
