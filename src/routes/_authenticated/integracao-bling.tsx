@@ -244,6 +244,8 @@ function ClientView() {
   );
 }
 
+const RES_LABEL: Record<string, string> = { orders: "Pedidos", products: "Produtos", stock: "Estoque", deposits: "Depósitos" };
+
 function Stat({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: number }) {
   return (
     <div className="glass rounded-2xl p-5">
