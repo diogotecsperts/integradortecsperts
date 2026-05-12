@@ -229,7 +229,7 @@ function ClientView() {
               )}
               {lastRuns.map((r) => (
                 <tr key={r.id} className="border-t border-border/60">
-                  <td className="py-2 font-medium">{r.resource}</td>
+                  <td className="py-2 font-medium">{RES_LABEL[r.resource] ?? r.resource}</td>
                   <td><RunStatus status={r.status} /></td>
                   <td className="text-xs text-muted-foreground">{new Date(r.started_at).toLocaleString("pt-BR")}</td>
                   <td>{r.items_processed}</td>
