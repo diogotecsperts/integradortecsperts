@@ -17,6 +17,7 @@ import { Route as AuthenticatedDashboardRouteImport } from './routes/_authentica
 import { Route as AuthenticatedAgentRouteImport } from './routes/_authenticated/agent'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/_admin'
 import { Route as AuthenticatedAdminAdminIndexRouteImport } from './routes/_authenticated/_admin/admin.index'
+import { Route as ApiPublicHooksBlingSyncTickRouteImport } from './routes/api/public/hooks/bling-sync-tick'
 import { Route as ApiPublicBlingCallbackRouteImport } from './routes/api/public/bling/callback'
 import { Route as AuthenticatedAdminAdminSettingsRouteImport } from './routes/_authenticated/_admin/admin.settings'
 import { Route as AuthenticatedAdminAdminClientsRouteImport } from './routes/_authenticated/_admin/admin.clients'
@@ -61,6 +62,12 @@ const AuthenticatedAdminAdminIndexRoute =
     path: '/admin/',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const ApiPublicHooksBlingSyncTickRoute =
+  ApiPublicHooksBlingSyncTickRouteImport.update({
+    id: '/api/public/hooks/bling-sync-tick',
+    path: '/api/public/hooks/bling-sync-tick',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicBlingCallbackRoute = ApiPublicBlingCallbackRouteImport.update({
   id: '/api/public/bling/callback',
   path: '/api/public/bling/callback',
@@ -88,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
   '/admin/settings': typeof AuthenticatedAdminAdminSettingsRoute
   '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
+  '/api/public/hooks/bling-sync-tick': typeof ApiPublicHooksBlingSyncTickRoute
   '/admin/': typeof AuthenticatedAdminAdminIndexRoute
 }
 export interface FileRoutesByTo {
@@ -99,6 +107,7 @@ export interface FileRoutesByTo {
   '/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
   '/admin/settings': typeof AuthenticatedAdminAdminSettingsRoute
   '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
+  '/api/public/hooks/bling-sync-tick': typeof ApiPublicHooksBlingSyncTickRoute
   '/admin': typeof AuthenticatedAdminAdminIndexRoute
 }
 export interface FileRoutesById {
@@ -113,6 +122,7 @@ export interface FileRoutesById {
   '/_authenticated/_admin/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
   '/_authenticated/_admin/admin/settings': typeof AuthenticatedAdminAdminSettingsRoute
   '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
+  '/api/public/hooks/bling-sync-tick': typeof ApiPublicHooksBlingSyncTickRoute
   '/_authenticated/_admin/admin/': typeof AuthenticatedAdminAdminIndexRoute
 }
 export interface FileRouteTypes {
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/admin/clients'
     | '/admin/settings'
     | '/api/public/bling/callback'
+    | '/api/public/hooks/bling-sync-tick'
     | '/admin/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -137,6 +148,7 @@ export interface FileRouteTypes {
     | '/admin/clients'
     | '/admin/settings'
     | '/api/public/bling/callback'
+    | '/api/public/hooks/bling-sync-tick'
     | '/admin'
   id:
     | '__root__'
@@ -150,6 +162,7 @@ export interface FileRouteTypes {
     | '/_authenticated/_admin/admin/clients'
     | '/_authenticated/_admin/admin/settings'
     | '/api/public/bling/callback'
+    | '/api/public/hooks/bling-sync-tick'
     | '/_authenticated/_admin/admin/'
   fileRoutesById: FileRoutesById
 }
@@ -158,6 +171,7 @@ export interface RootRouteChildren {
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiPublicBlingCallbackRoute: typeof ApiPublicBlingCallbackRoute
+  ApiPublicHooksBlingSyncTickRoute: typeof ApiPublicHooksBlingSyncTickRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -217,6 +231,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/'
       preLoaderRoute: typeof AuthenticatedAdminAdminIndexRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/api/public/hooks/bling-sync-tick': {
+      id: '/api/public/hooks/bling-sync-tick'
+      path: '/api/public/hooks/bling-sync-tick'
+      fullPath: '/api/public/hooks/bling-sync-tick'
+      preLoaderRoute: typeof ApiPublicHooksBlingSyncTickRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/public/bling/callback': {
       id: '/api/public/bling/callback'
@@ -280,6 +301,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiPublicBlingCallbackRoute: ApiPublicBlingCallbackRoute,
+  ApiPublicHooksBlingSyncTickRoute: ApiPublicHooksBlingSyncTickRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
