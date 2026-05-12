@@ -250,12 +250,14 @@ export async function syncOrders(
     resumeRunId: opts?.resumeRunId,
     path: "/pedidos/vendas",
     pagesPerBatch: ORDERS_PAGES_PER_BATCH,
+    pageLimit: ORDERS_PAGE_LIMIT,
     upsert: async (list) => {
       const rows = list.map(mapOrder(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_orders")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
+      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length}`);
       // Itens: lista do Bling não traz `itens`; precisamos buscar detalhe.
       await fetchAndUpsertOrderItems(tenantId, rows.map((r) => r.bling_id));
       return rows.length;
