@@ -53,7 +53,7 @@ FORMATAÇÃO DE RESPOSTA (siga EXATAMENTE):
 | Fev/26 | 98 | R$ 31.200,50 |
 
 - NUNCA escreva "\\n" como texto literal — use quebras reais.
-- NUNCA use tabela para 2 colunas — prefira bullets.\`;
+- NUNCA use tabela para 2 colunas — prefira bullets.`;
 }
 
 // Remove raciocínio interno e artefatos do MiniMax antes de exibir/persistir.
