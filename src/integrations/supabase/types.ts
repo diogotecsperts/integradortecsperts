@@ -170,6 +170,60 @@ export type Database = {
           },
         ]
       }
+      bling_contacts: {
+        Row: {
+          bling_id: number
+          bling_updated_at: string | null
+          cep: string | null
+          cidade: string | null
+          email: string | null
+          id: string
+          nome: string | null
+          numero_documento: string | null
+          raw: Json
+          situacao: string | null
+          synced_at: string
+          telefone: string | null
+          tenant_id: string
+          tipo: string | null
+          uf: string | null
+        }
+        Insert: {
+          bling_id: number
+          bling_updated_at?: string | null
+          cep?: string | null
+          cidade?: string | null
+          email?: string | null
+          id?: string
+          nome?: string | null
+          numero_documento?: string | null
+          raw?: Json
+          situacao?: string | null
+          synced_at?: string
+          telefone?: string | null
+          tenant_id: string
+          tipo?: string | null
+          uf?: string | null
+        }
+        Update: {
+          bling_id?: number
+          bling_updated_at?: string | null
+          cep?: string | null
+          cidade?: string | null
+          email?: string | null
+          id?: string
+          nome?: string | null
+          numero_documento?: string | null
+          raw?: Json
+          situacao?: string | null
+          synced_at?: string
+          telefone?: string | null
+          tenant_id?: string
+          tipo?: string | null
+          uf?: string | null
+        }
+        Relationships: []
+      }
       bling_credentials: {
         Row: {
           access_token_enc: string
@@ -292,6 +346,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      bling_order_items: {
+        Row: {
+          bling_item_id: number | null
+          codigo: string | null
+          descricao: string | null
+          id: string
+          order_bling_id: number
+          preco: number
+          produto_id: number | null
+          quantidade: number
+          raw: Json
+          synced_at: string
+          tenant_id: string
+          valor_total: number | null
+        }
+        Insert: {
+          bling_item_id?: number | null
+          codigo?: string | null
+          descricao?: string | null
+          id?: string
+          order_bling_id: number
+          preco?: number
+          produto_id?: number | null
+          quantidade?: number
+          raw?: Json
+          synced_at?: string
+          tenant_id: string
+          valor_total?: number | null
+        }
+        Update: {
+          bling_item_id?: number | null
+          codigo?: string | null
+          descricao?: string | null
+          id?: string
+          order_bling_id?: number
+          preco?: number
+          produto_id?: number | null
+          quantidade?: number
+          raw?: Json
+          synced_at?: string
+          tenant_id?: string
+          valor_total?: number | null
+        }
+        Relationships: []
       }
       bling_orders: {
         Row: {
@@ -685,6 +784,15 @@ export type Database = {
           total_orders: number
         }[]
       }
+      agent_sales_by_region: {
+        Args: { _from: string; _tenant_id: string; _to: string }
+        Returns: {
+          cnt: number
+          customers: number
+          total: number
+          uf: string
+        }[]
+      }
       agent_summarize_sales: {
         Args: {
           _from: string
@@ -697,6 +805,22 @@ export type Database = {
           customers: number
           group_key: string
           total: number
+        }[]
+      }
+      agent_top_products: {
+        Args: {
+          _from: string
+          _limit?: number
+          _tenant_id: string
+          _to: string
+        }
+        Returns: {
+          codigo: string
+          faturamento: number
+          nome: string
+          pedidos_count: number
+          produto_id: number
+          qtd_total: number
         }[]
       }
       get_user_tenant: { Args: { _user_id: string }; Returns: string }
