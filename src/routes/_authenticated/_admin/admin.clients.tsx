@@ -326,11 +326,11 @@ function AgentPromptField({ value, onChange }: { value: string; onChange: (v: st
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={10}
-        placeholder="Vazio = usa o prompt padrão do sistema. Escreva aqui a persona, tom e regras de negócio específicas deste cliente."
+        placeholder="Vazio = usa o prompt padrão global definido nas Configurações do Sistema. Escreva aqui a persona, tom e regras de negócio específicas deste cliente."
         className="w-full resize-y rounded-lg border border-border bg-background/50 px-3 py-2.5 font-mono text-xs leading-relaxed outline-none ring-ring/30 focus:ring-2"
       />
       <p className="text-[10px] leading-relaxed text-muted-foreground">
-        O contexto temporal (datas atuais) e as regras de formatação Markdown / anti-vazamento de raciocínio são adicionados automaticamente — você só edita a persona e as instruções de negócio.
+        Hierarquia: <strong>Cliente</strong> → <strong>Global</strong> (Configurações do Sistema) → <strong>Padrão fixo</strong>. O contexto temporal e as regras de formatação são adicionados automaticamente.
       </p>
     </div>
   );

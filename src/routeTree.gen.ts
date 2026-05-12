@@ -18,6 +18,7 @@ import { Route as AuthenticatedAgentRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/_admin'
 import { Route as AuthenticatedAdminAdminIndexRouteImport } from './routes/_authenticated/_admin/admin.index'
 import { Route as ApiPublicBlingCallbackRouteImport } from './routes/api/public/bling/callback'
+import { Route as AuthenticatedAdminAdminSettingsRouteImport } from './routes/_authenticated/_admin/admin.settings'
 import { Route as AuthenticatedAdminAdminClientsRouteImport } from './routes/_authenticated/_admin/admin.clients'
 
 const AuthRoute = AuthRouteImport.update({
@@ -65,6 +66,12 @@ const ApiPublicBlingCallbackRoute = ApiPublicBlingCallbackRouteImport.update({
   path: '/api/public/bling/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedAdminAdminSettingsRoute =
+  AuthenticatedAdminAdminSettingsRouteImport.update({
+    id: '/admin/settings',
+    path: '/admin/settings',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminAdminClientsRoute =
   AuthenticatedAdminAdminClientsRouteImport.update({
     id: '/admin/clients',
@@ -79,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/integracao-bling': typeof AuthenticatedIntegracaoBlingRoute
   '/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
+  '/admin/settings': typeof AuthenticatedAdminAdminSettingsRoute
   '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
   '/admin/': typeof AuthenticatedAdminAdminIndexRoute
 }
@@ -89,6 +97,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/integracao-bling': typeof AuthenticatedIntegracaoBlingRoute
   '/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
+  '/admin/settings': typeof AuthenticatedAdminAdminSettingsRoute
   '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
   '/admin': typeof AuthenticatedAdminAdminIndexRoute
 }
@@ -102,6 +111,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/integracao-bling': typeof AuthenticatedIntegracaoBlingRoute
   '/_authenticated/_admin/admin/clients': typeof AuthenticatedAdminAdminClientsRoute
+  '/_authenticated/_admin/admin/settings': typeof AuthenticatedAdminAdminSettingsRoute
   '/api/public/bling/callback': typeof ApiPublicBlingCallbackRoute
   '/_authenticated/_admin/admin/': typeof AuthenticatedAdminAdminIndexRoute
 }
@@ -114,6 +124,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/integracao-bling'
     | '/admin/clients'
+    | '/admin/settings'
     | '/api/public/bling/callback'
     | '/admin/'
   fileRoutesByTo: FileRoutesByTo
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/integracao-bling'
     | '/admin/clients'
+    | '/admin/settings'
     | '/api/public/bling/callback'
     | '/admin'
   id:
@@ -136,6 +148,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/integracao-bling'
     | '/_authenticated/_admin/admin/clients'
+    | '/_authenticated/_admin/admin/settings'
     | '/api/public/bling/callback'
     | '/_authenticated/_admin/admin/'
   fileRoutesById: FileRoutesById
@@ -212,6 +225,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicBlingCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/_admin/admin/settings': {
+      id: '/_authenticated/_admin/admin/settings'
+      path: '/admin/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AuthenticatedAdminAdminSettingsRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/_admin/admin/clients': {
       id: '/_authenticated/_admin/admin/clients'
       path: '/admin/clients'
@@ -224,11 +244,13 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminAdminClientsRoute: typeof AuthenticatedAdminAdminClientsRoute
+  AuthenticatedAdminAdminSettingsRoute: typeof AuthenticatedAdminAdminSettingsRoute
   AuthenticatedAdminAdminIndexRoute: typeof AuthenticatedAdminAdminIndexRoute
 }
 
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminAdminClientsRoute: AuthenticatedAdminAdminClientsRoute,
+  AuthenticatedAdminAdminSettingsRoute: AuthenticatedAdminAdminSettingsRoute,
   AuthenticatedAdminAdminIndexRoute: AuthenticatedAdminAdminIndexRoute,
 }
 

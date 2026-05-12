@@ -1,29 +1,65 @@
-## Ajuste do modal de Configurações do cliente
+## Avaliação
+A instrução encaixa bem na arquitetura. O `_admin` layout já protege via `role === "superadmin"` e o `AppShell` já tem `adminNav`. Sem ressalvas — só duas escolhas técnicas que vale alinhar:
 
-**Problema atual** (`src/routes/_authenticated/_admin/admin.clients.tsx`, função `Modal`):
-- `max-w-md` → muito estreito.
-- Sem altura máxima nem `overflow-y-auto` → conteúdo (Bling + Resend + Minimax + Persona IA + Painel Bling) ultrapassa a viewport e a parte inferior fica inacessível.
-- Padding fixo no container, sem separação header/scroll.
+- **PK textual `'global'`**: vou usar `text` com `CHECK (id = 'global')` para garantir tabela single-row.
+- **Acesso**: leitura no backend usa `supabaseAdmin` (bypassa RLS); a tabela ainda terá RLS habilitada com policy admin-only para compliance.
 
-## Mudanças (apenas no componente `Modal`)
+## Plano
 
-1. **Largura:** trocar `max-w-md` por `max-w-3xl` (≈ 768px) e `w-full` mantido — confortável em desktop, ainda responsivo em telas menores.
-2. **Altura + rolagem:** envelopar em flex coluna com `max-h-[90vh]`; header sticky no topo, corpo com `overflow-y-auto` e `flex-1`.
-3. **Estrutura:**
-   ```
-   <div max-w-3xl max-h-[90vh] flex flex-col>
-     <header sticky com título + botão fechar (X)>
-     <div flex-1 overflow-y-auto p-6>
-       {children}
-     </div>
-   </div>
-   ```
-4. **Botão de fechar (X)** no header — hoje só fecha clicando no backdrop; um X explícito melhora UX premium.
-5. **Layout interno do `TenantSettingsForm`:** com a largura maior, agrupar os blocos de credenciais (Bling / Resend / Minimax) em **grid 2 colunas no desktop** (`md:grid-cols-2`), mantendo o textarea da Persona IA e o painel Bling em largura total. Isso aproveita o espaço novo sem mudar a lógica.
+### 1. Migration
+Criar `global_settings` (single-row) + seed:
+```sql
+CREATE TABLE public.global_settings (
+  id text PRIMARY KEY DEFAULT 'global' CHECK (id = 'global'),
+  default_agent_persona text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.global_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "global_settings_admin_all" ON public.global_settings
+  FOR ALL TO authenticated
+  USING (is_superadmin()) WITH CHECK (is_superadmin());
+CREATE TRIGGER trg_global_settings_updated
+  BEFORE UPDATE ON public.global_settings
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+INSERT INTO public.global_settings (id, default_agent_persona)
+VALUES ('global', 'Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts. Responda SEMPRE em PT-BR, de forma objetiva, profissional e consultiva.')
+ON CONFLICT (id) DO NOTHING;
+```
 
-## Fora de escopo
-- Lógica do form, validações, server functions.
-- Outros modais (`Novo Tenant`, `Novo Usuário`) — são pequenos, ficam como estão (poderiam herdar o novo `Modal` sem prejuízo, já que `max-w-3xl` é só um teto).
+### 2. Backend — `src/lib/admin.functions.ts`
+Adicionar duas server functions admin-only:
+- `getGlobalSettings()` → lê a row `'global'`. Se não existir, retorna `{ default_agent_persona: DEFAULT_FALLBACK }`.
+- `upsertGlobalSettings({ default_agent_persona })` → upsert na row `'global'`.
 
-## Verificação
-- Abrir Configurações de qualquer tenant → modal largo, header fixo, conteúdo rola até o painel Bling no fim, botão X funciona.
+### 3. Backend — `src/lib/agent.functions.ts`
+Em `chatWithAgent.handler`, após ler `tenant_settings`:
+- Se `customPersona` (tenant) vazio → buscar `global_settings.default_agent_persona`.
+- Se ambos vazios/erro → usa o fallback fixo já existente (`DEFAULT_AGENT_PERSONA`).
+- Passar o resolvido para `buildSystemPrompt(persona)`.
+
+Implementação em uma única query paralela (`Promise.all`) para não adicionar latência quando o tenant tem custom prompt (caso comum).
+
+### 4. UI Superadmin — nova rota
+- Criar `src/routes/_authenticated/_admin/admin.settings.tsx` (rota `/admin/settings`, protegida pelo `_admin`).
+- Layout consistente com `admin.clients.tsx`: glass card com seção **"IA Global"**, textarea grande (rows=14, monospace), botões **Salvar** e **Restaurar Padrão Original** (volta ao texto de seed).
+- Subtexto explicando a hierarquia: cliente > global > fallback.
+- Adicionar entrada no `adminNav` em `src/components/AppShell.tsx`:
+  ```ts
+  { to: "/admin/settings", label: "Configurações", icon: Settings }
+  ```
+
+### 5. UX — `src/routes/_authenticated/_admin/admin.clients.tsx`
+No `AgentPromptField`, atualizar o subtexto e o placeholder do textarea:
+- Placeholder: `"Vazio = usa o prompt padrão global definido em Configurações do Sistema."`
+- Subtexto: `"Hierarquia: Cliente → Global (Configurações do Sistema) → Padrão. O contexto temporal e regras de formatação são adicionados automaticamente."`
+
+### 6. Verificação
+- Migration aplica sem erro.
+- `/admin/settings` acessível só para superadmin (cliente vai pra `/dashboard`).
+- Editar global → salvar → tenant SEM custom prompt usa o novo global.
+- Tenant COM custom prompt continua usando o seu (global ignorado).
+- Limpar global e custom → fallback fixo do código entra em ação.
+
+### Fora de escopo
+- Versionamento/histórico do prompt global.
+- Outras configurações globais (ex.: limites, modelos) — só a persona pediu agora.

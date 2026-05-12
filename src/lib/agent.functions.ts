@@ -339,10 +339,15 @@ export const chatWithAgent = createServerFn({ method: "POST" })
     const tenantId = await resolveActiveTenantId(context.userId, data.tenantId);
     if (!tenantId) throw new Response("Sem tenant associado.", { status: 400 });
 
-    const { data: settings } = await supabaseAdmin
-      .from("tenant_settings").select("minimax_api_key, agent_system_prompt").eq("tenant_id", tenantId).maybeSingle();
+    const [{ data: settings }, { data: globalRow }] = await Promise.all([
+      supabaseAdmin.from("tenant_settings").select("minimax_api_key, agent_system_prompt").eq("tenant_id", tenantId).maybeSingle(),
+      supabaseAdmin.from("global_settings").select("default_agent_persona").eq("id", "global").maybeSingle(),
+    ]);
     const apiKey = settings?.minimax_api_key;
-    const customPersona = settings?.agent_system_prompt ?? null;
+    const tenantPersona = (settings?.agent_system_prompt ?? "").trim();
+    const globalPersona = (globalRow?.default_agent_persona ?? "").trim();
+    // Hierarquia: cliente → global → fallback fixo (DEFAULT_AGENT_PERSONA)
+    const resolvedPersona = tenantPersona || globalPersona || null;
     if (!apiKey) throw new Response("Chave Minimax não configurada para este tenant.", { status: 400 });
 
     // Conversa
@@ -366,7 +371,7 @@ export const chatWithAgent = createServerFn({ method: "POST" })
       .order("created_at", { ascending: true })
       .limit(40);
     const messages: ChatMessage[] = [
-      { role: "system", content: buildSystemPrompt(customPersona) },
+      { role: "system", content: buildSystemPrompt(resolvedPersona) },
       ...((history ?? []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))),
       { role: "user", content: data.message },
     ];
