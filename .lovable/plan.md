@@ -1,81 +1,153 @@
 ## Objetivo
 
-Diagnosticar por que a sincronização do Bling para em ~6.000 contatos e ~240 pedidos, expondo o erro real na UI, deixando cada tick mais leve, e medindo o tempo por página no log.
+Acelerar a sincronização de pedidos (~60→~480 itens/h por cron) sem estourar o rate-limit do Bling (4 req/s) nem o timeout do Worker (30s), e endurecer o "Sync FULL" para sobreviver a runs longas.
 
-## Mudanças
+## 1. `sync.server.ts` — paralelismo limitado no detail-fetch + parâmetros
 
-### 1. UI — exibir `error_message` real
+### 1a. Tornar o `throttle()` seguro para concorrência (pré-requisito)
 
-**Arquivo:** `src/routes/_authenticated/_admin/admin.clients.tsx` (lista de `lastRuns`, ~linha 486–497)
+**Arquivo:** `src/lib/bling/client.server.ts` (linhas 19–28)
 
-- Trocar a linha do histórico por um layout em duas linhas:
-  - Linha 1: recurso (já em PT) · status · itens · hora.
-  - Linha 2 (apenas quando `r.status === "error"` e `r.error_message`): texto pequeno `text-[10px] text-destructive/80` com `truncate` mostrando `r.error_message`, e `title={r.error_message}` para hover nativo.
-- Envolver o status `error` em `<Tooltip>` (`TooltipProvider` já está importado) com `<TooltipContent>` exibindo a mensagem completa (até 1000 chars).
-
-**Arquivo:** `src/routes/_authenticated/integracao-bling.tsx` (tabela `lastRuns`, ~linha 215–228)
-
-- Na coluna “Erro”, hoje só mostra `truncate` com `title`. Trocar por `<Tooltip>` (importar `Tooltip*` de `@/components/ui/tooltip`) que abre `TooltipContent` com a mensagem completa em `whitespace-pre-wrap break-words max-w-md`. Mantém o truncate inline para não quebrar layout.
-- Envolver a tabela em `TooltipProvider`.
-
-> Apenas leitura/exibição — `error_message` já vem do `getBlingStatus` (linha 75 de `bling.functions.ts`).
-
-### 2. `bling-sync-tick.tsx` — um recurso por tick **por tenant**
-
-**Arquivo:** `src/routes/api/public/hooks/bling-sync-tick.tsx`
-
-Substituir o loop atual (que tenta orders + products + contacts + stock + deposits no mesmo tick) por seleção de **um único recurso pendente por tenant**, com prioridade:
-
-```text
-1. Resume run "running" mais antiga (qualquer recurso entre orders/products/contacts) — termina antes de abrir nova frente.
-2. Senão, escolhe o recurso com freshness mais antigo entre [orders, products, contacts] (last ok finished_at; nulls = mais antigo).
-3. stock e deposits NÃO concorrem com o slot principal — entram só se nenhum dos três acima precisou rodar (são single-shot baratos). Mantém a regra "deposits 1x/24h".
-```
-
-Implementação:
-
-- Para cada tenant: query única em `bling_sync_runs` filtrando `status='running'` + `next_page is not null` em `('orders','products','contacts')`, order by `started_at asc` limit 1 → se achou, roda `fn(resumeRunId)` e termina o tenant.
-- Senão, query `select resource, max(finished_at) ...` agrupando os 3 recursos para escolher o mais defasado e roda **apenas** ele (incremental).
-- Só se `picked === null` (ex.: sem credenciais / sem dados), tenta `stock` e em seguida `deposits` (com a regra 24h).
-- Mantém o `reaper` no início e a auth via `apikey`.
-
-Ganho: cada execução por tenant faz no máximo 1 chamada `runPaginatedBatch` (≤ ORDERS_PAGES_PER_BATCH = 1 página de 20 pedidos, ou 5 páginas de produtos/contatos), bem abaixo do limite de tempo do Worker.
-
-### 3. `sync.server.ts` — log de tempo por página
-
-**Arquivo:** `src/lib/bling/sync.server.ts`, função `runPaginatedBatch` (loop ~419–438)
-
-Em volta de cada iteração:
+Hoje `throttle()` lê/escreve `lastCall` sem fila — chamadas paralelas calculam `wait=0` a partir do mesmo timestamp e disparam juntas, furando o limite de 4 req/s. Substituir por fila assíncrona por tenant:
 
 ```ts
-const tFetch0 = Date.now();
-const resp = await blingFetch(...);
-const tFetch1 = Date.now();
-// ...
-const n = await upsert(list);
-const tUp1 = Date.now();
-console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} fetchMs=${tFetch1 - tFetch0} upsertMs=${tUp1 - tFetch1} items=${n} total=${count}`);
+const tenantQueues = new Map<string, Promise<void>>();
+async function throttle(tenantId: string) {
+  const prev = tenantQueues.get(tenantId) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((r) => { release = r; });
+  tenantQueues.set(tenantId, prev.then(() => next));
+  await prev;
+  const now = Date.now();
+  const last = lastCall.get(tenantId) ?? 0;
+  const wait = Math.max(0, last + MIN_INTERVAL_MS - now);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastCall.set(tenantId, Date.now());
+  release();
+}
 ```
 
-Substitui o `console.log` atual (linha 433). Para `orders`, `upsertMs` engloba o detail-fetch dos itens — fica óbvio no log se o gargalo é Bling (fetch) ou Supabase (upsert).
+Resultado: mesmo com `Promise.all` de 3+ chamadas, a saída para o Bling continua espaçada por ≥260ms. Sem isso, o paralelismo proposto causa 429.
 
-### 4. `endRun` — preservar status e body do `BlingError`
+### 1b. `fetchAndUpsertOrderItems` — lotes de 3 em paralelo
 
-**Arquivo:** `src/lib/bling/sync.server.ts`, função `errMessage` (linhas 480–483)
+**Arquivo:** `src/lib/bling/sync.server.ts` (~linhas 222–262)
 
-Hoje já existe `errMessage` que serializa `BlingError` como `"<msg> :: <body slice 500>"`. Mas o `runPaginatedBatch` chama `endRun(..., msg, ...)` que trunca em 1000 chars — OK. Reforçar:
+Trocar o `for (const oid of orderIds)` por chunks de 3 com `Promise.all`:
 
-- Em `errMessage`, incluir `status` explícito: `` `[${e.status}] ${e.message} :: ${JSON.stringify(e.body).slice(0, 700)}` ``.
-- Em `runPaginatedBatch` (catch ~443), além de `console.error`, registrar também `pagina` e `count` no `meta` do `endRun`:
-  ```ts
-  await endRun(runId, false, count, msg, { mode, dataAlteracaoInicial, failedPage: pagina, failedAfterCount: count });
+```ts
+const CONCURRENCY = 3;
+for (let i = 0; i < orderIds.length; i += CONCURRENCY) {
+  const slice = orderIds.slice(i, i + CONCURRENCY);
+  const results = await Promise.all(slice.map(async (oid) => {
+    try {
+      const detail = await blingFetch<{ data?: Record<string, unknown> }>(
+        tenantId, `/pedidos/vendas/${oid}`,
+      );
+      return { oid, itens: (detail?.data?.itens as Array<Record<string, unknown>>) ?? [] };
+    } catch (e) {
+      console.warn(`[bling-sync] tenant=${tenantId} resource=orders item-detail-fail order=${oid} err=${errMessage(e)}`);
+      return { oid, itens: [] };
+    }
+  }));
+  for (const { oid, itens } of results) {
+    for (const it of itens) {
+      // mesma montagem de allRows que existe hoje
+    }
+  }
+}
+```
+
+Mantém o catch por pedido (um detail fail não derruba o batch). O insert único no fim continua igual.
+
+### 1c. Parâmetros
+
+**Arquivo:** `src/lib/bling/sync.server.ts` (linhas 9–13)
+
+```ts
+const ORDERS_PAGES_PER_BATCH = 1;   // mantém
+const ORDERS_PAGE_LIMIT = 40;       // era 20
+```
+
+Custo por tick (40 pedidos):
+- 1 list call: ~260ms
+- 40 details em chunks de 3 paralelos: ceil(40/3)=14 rodadas × 260ms ≈ 3,7s
+- Upsert + delete + insert dos itens: ~0,5–1s
+- **Total ≈ 5–6s**, bem abaixo dos 30s do Worker.
+
+### 1d. Heartbeat com precisão de 30s
+
+**Arquivo:** `src/lib/bling/sync.server.ts`, função `runPaginatedBatch` (~388–470)
+
+Hoje o heartbeat só é gravado depois de cada upsert. Em pedidos com detail-fetch lento, o gap entre upserts pode passar de 5min e o reaper mata a run. Adicionar um ticker independente:
+
+```ts
+const hbTimer = setInterval(() => {
+  supabaseAdmin.from("bling_sync_runs").update({
+    heartbeat_at: new Date().toISOString(),
+    items_processed: count,
+  }).eq("id", runId).then(() => {});
+}, 30_000);
+try {
+  // loop atual
+} finally {
+  clearInterval(hbTimer);
+}
+```
+
+## 2. Cron — de 20min para 5min
+
+**Não é migration** (contém URL e anon key específicos do projeto). Usar `supabase.insert` via tool de SQL para reagendar:
+
+```sql
+SELECT cron.unschedule('bling-sync-tick');
+SELECT cron.schedule(
+  'bling-sync-tick',
+  '*/5 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-tick',
+    headers := '{"Content-Type":"application/json","apikey":"<ANON_KEY_ATUAL>"}'::jsonb,
+    body := '{}'::jsonb
+  ) AS request_id;
+  $$
+);
+```
+
+Resultado combinado (1+2): **40 pedidos a cada 5 min ≈ 480 itens/h**, ~8× o ritmo atual. Para 50k pedidos numa carga inicial, ainda usar o botão "Sync FULL" (que não usa o cron).
+
+## 3. UI — aviso "Sync FULL em andamento" no admin
+
+**Arquivo:** `src/routes/_authenticated/_admin/admin.clients.tsx` (~linhas 481–485, próximo ao botão "Sync FULL (tudo)")
+
+- Detectar via `data.lastRuns`: se houver alguma run com `status === "running"` cujo `meta.mode === "full"` (ou `next_page != null`), mostrar um banner amarelo logo abaixo do botão:
   ```
-- Aplicar o mesmo padrão nos catches de `syncDeposits` e `syncStock` (já chamam `errMessage`, então herdam o status/body — só confirmar).
+  ⚠ Sync FULL em andamento — não feche esta aba até concluir. 
+  Última atualização: <heartbeat há Xs>.
+  ```
+- Mostrar tempo desde o último `heartbeat_at` em segundos (atualizado via `setInterval` local de 5s) — se passar de 60s, pintar de vermelho.
+- Quando o usuário clicar em "Sync FULL", abrir um `confirm` com o mesmo aviso antes de disparar.
 
-> Não mexe em `bling_sync_runs.error_message` (já é `text` sem limite de tamanho duro; o cap de 1000 chars é client-side em `endRun`).
+> O backend não depende da aba aberta (o `runUntil` roda no Worker). O aviso é só para o usuário não ficar achando que está congelado e não cancelar a chamada `useMutation` em andamento, o que abortaria o request e mataria o run no meio.
 
 ## Fora de escopo
 
-- Sem migrations, sem mudança no cron schedule, sem mudança em RLS.
-- Sem alteração em `client.server.ts` (throttle / refresh já está OK).
-- Sem alteração no comportamento do botão "Sync FULL (tudo)" do admin — ele continua disparando `runUntil` sequencial direto.
+- Não mexer em RLS, schema, edge functions, nem em `client.ts`/`auth-middleware.ts`.
+- Não mudar a estratégia de "1 recurso por tenant por tick" — só os parâmetros e o paralelismo interno.
+- Não tocar em `syncContacts`/`syncProducts`/`syncStock`/`syncDeposits` além do throttle compartilhado.
+
+## Detalhes técnicos (resumo de risco)
+
+| Risco | Mitigação |
+|-------|-----------|
+| `Promise.all` fura 4 req/s do Bling → 429 cascata | Fila assíncrona em `throttle()` (1a) — sem isso, NÃO ative o paralelismo |
+| Tick acima de 30s | 40 pedidos × paralelismo 3 = ~5–6s; folga grande |
+| Reaper mata run longa | Heartbeat por `setInterval(30s)` |
+| pg_cron com URL ou key errada | SQL via insert tool, não migration; conferir com `SELECT * FROM cron.job` depois |
+
+## Arquivos a editar
+
+- `src/lib/bling/client.server.ts` — fila no throttle
+- `src/lib/bling/sync.server.ts` — Promise.all no detail-fetch, constantes, heartbeat ticker
+- `src/routes/_authenticated/_admin/admin.clients.tsx` — banner + confirm do Sync FULL
+- pg_cron — reagendar para `*/5 * * * *` (via SQL insert)
