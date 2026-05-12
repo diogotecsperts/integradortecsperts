@@ -6,7 +6,7 @@ import {
   getTenantSettings, upsertTenantSettings,
 } from "@/lib/admin.functions";
 import * as React from "react";
-import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink } from "lucide-react";
+import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink, X } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
 import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling } from "@/lib/bling.functions";
@@ -179,11 +179,21 @@ function ClientsPage() {
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center px-4">
+    <div className="fixed inset-0 z-50 grid place-items-center px-4 py-6">
       <div className="absolute inset-0 bg-background/70 backdrop-blur" onClick={onClose} />
-      <div className="glass relative w-full max-w-md rounded-2xl p-6">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <div className="mt-4">{children}</div>
+      <div className="glass relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border/60 bg-background/60 px-6 py-4 backdrop-blur">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar"
+            className="grid h-8 w-8 place-items-center rounded-md border border-border text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
       </div>
     </div>
   );
@@ -260,19 +270,21 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
   if (isLoading) return <div className="grid h-32 place-items-center"><Loader2 className="h-5 w-5 animate-spin" /></div>;
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); m.mutate(form); }} className="space-y-4">
-      <div className="space-y-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling ERP</div>
-        <Input label="Client ID" value={form.bling_client_id} onChange={(v) => setForm({ ...form, bling_client_id: v })} />
-        <SecretInput label="Client Secret" value={form.bling_client_secret} onChange={(v) => setForm({ ...form, bling_client_secret: v })} />
-      </div>
-      <div className="space-y-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resend</div>
-        <SecretInput label="API Key" value={form.resend_api_key} onChange={(v) => setForm({ ...form, resend_api_key: v })} />
-      </div>
-      <div className="space-y-3">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
-        <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
+    <form onSubmit={(e) => { e.preventDefault(); m.mutate(form); }} className="space-y-6">
+      <div className="grid gap-6 md:grid-cols-2">
+        <div className="space-y-3 rounded-xl border border-border/60 p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bling ERP</div>
+          <Input label="Client ID" value={form.bling_client_id} onChange={(v) => setForm({ ...form, bling_client_id: v })} />
+          <SecretInput label="Client Secret" value={form.bling_client_secret} onChange={(v) => setForm({ ...form, bling_client_secret: v })} />
+        </div>
+        <div className="space-y-3 rounded-xl border border-border/60 p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Resend</div>
+          <SecretInput label="API Key" value={form.resend_api_key} onChange={(v) => setForm({ ...form, resend_api_key: v })} />
+        </div>
+        <div className="space-y-3 rounded-xl border border-border/60 p-4 md:col-span-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
+          <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
+        </div>
       </div>
       <AgentPromptField
         value={form.agent_system_prompt}
