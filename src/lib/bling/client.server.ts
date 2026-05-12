@@ -18,7 +18,7 @@ export class BlingError extends Error {
 
 // ============ Throttle simples (3 req/s) por tenant ============
 const lastCall = new Map<string, number>();
-const MIN_INTERVAL_MS = 350;
+const MIN_INTERVAL_MS = 260; // ~3.8 req/s, abaixo do limite de 4 req/s do Bling
 async function throttle(tenantId: string) {
   const now = Date.now();
   const last = lastCall.get(tenantId) ?? 0;

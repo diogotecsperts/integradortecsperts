@@ -5,6 +5,7 @@ import { Plug, RefreshCw, Unplug, Boxes, Warehouse, BarChart3, Loader2, External
 import { toast } from "sonner";
 import { createBlingAuthLink, disconnectBling, getBlingStatus } from "@/lib/bling.functions";
 import { useAuth } from "@/hooks/use-auth";
+import { formatRelative } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/integracao-bling")({
   component: IntegracaoBlingPage,
@@ -186,6 +187,34 @@ function ClientView() {
         <Stat icon={BarChart3} label="Saldos de estoque" value={stocks} />
       </div>
 
+      {data.freshness && (
+        <div className="glass rounded-2xl p-6">
+          <h2 className="text-lg font-semibold">Frescor dos dados</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Sincronização automática a cada ~20 minutos. Você não precisa fazer nada.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {data.freshness.map((f) => (
+              <div key={f.resource} className="rounded-xl border border-border/60 bg-card/40 p-4">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{RES_LABEL[f.resource] ?? f.resource}</div>
+                <div className="mt-1 text-lg font-bold">{f.lastOkAt ? formatRelative(f.lastOkAt) : "nunca"}</div>
+                <div className="mt-1 flex items-center gap-2 text-[10px]">
+                  {f.inProgress ? (
+                    <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-semibold uppercase text-primary">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> em andamento{f.nextPage ? ` · pág ${f.nextPage}` : ""}
+                    </span>
+                  ) : f.lastStatus === "error" ? (
+                    <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 font-semibold uppercase text-destructive">última falhou</span>
+                  ) : f.lastStatus === "ok" ? (
+                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-semibold uppercase text-emerald-300">ok</span>
+                  ) : (
+                    <span className="text-muted-foreground">aguardando primeira execução</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="glass rounded-2xl p-6">
         <h2 className="text-lg font-semibold">Últimas sincronizações</h2>
         <p className="mt-1 text-xs text-muted-foreground">As sincronizações são disparadas pelo administrador.</p>
@@ -214,6 +243,8 @@ function ClientView() {
     </div>
   );
 }
+
+const RES_LABEL: Record<string, string> = { orders: "Pedidos", products: "Produtos", stock: "Estoque", deposits: "Depósitos" };
 
 function Stat({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: number }) {
   return (

@@ -382,8 +382,16 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
   });
   const m = useMutation({
     mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "all"; mode?: "full" | "incremental" }) =>
-      sync({ data: { tenantId, resource: v.resource, mode: v.mode ?? "full" } }),
-    onSuccess: () => { toast.success("Sync concluído"); qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] }); },
+      sync({ data: { tenantId, resource: v.resource, mode: v.mode ?? "full", untilDone: (v.mode ?? "full") === "full", maxBatches: 12 } }),
+    onSuccess: (res) => {
+      const orders = (res as { orders?: { completed?: boolean; nextPage?: number | null } }).orders;
+      if (orders && orders.completed === false) {
+        toast.success(`Batch concluído — continua na página ${orders.nextPage}. O cron retomará automaticamente.`);
+      } else {
+        toast.success("Sync concluído");
+      }
+      qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] });
+    },
     onError: async (e) => toast.error(e instanceof Response ? (await e.text()) : (e as Error).message),
   });
   const mLink = useMutation({

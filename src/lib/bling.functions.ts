@@ -70,10 +70,26 @@ export const getBlingStatus = createServerFn({ method: "GET" })
     ]);
     const { data: lastRuns } = await supabaseAdmin
       .from("bling_sync_runs")
-      .select("id, resource, mode, status, started_at, finished_at, items_processed, error_message")
+      .select("id, resource, mode, status, started_at, finished_at, items_processed, error_message, cursor_page, next_page, heartbeat_at")
       .eq("tenant_id", tenantId)
       .order("started_at", { ascending: false })
-      .limit(15);
+      .limit(20);
+
+    const resources: Array<"orders" | "products" | "stock" | "deposits"> = ["orders", "products", "stock", "deposits"];
+    const freshness = resources.map((res) => {
+      const lastOk = (lastRuns ?? []).find((r) => r.resource === res && r.status === "ok");
+      const lastAny = (lastRuns ?? []).find((r) => r.resource === res);
+      const lastOkAt = lastOk?.finished_at ?? null;
+      const ageSeconds = lastOkAt ? Math.max(0, Math.floor((Date.now() - new Date(lastOkAt).getTime()) / 1000)) : null;
+      return {
+        resource: res,
+        lastOkAt,
+        ageSeconds,
+        lastStatus: lastAny?.status ?? null,
+        inProgress: Boolean(lastAny && lastAny.status === "running" && lastAny.next_page),
+        nextPage: lastAny?.next_page ?? null,
+      };
+    });
 
     return {
       tenantId,
@@ -84,6 +100,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       lastRefreshAt: cred?.last_refresh_at ?? null,
       counts: { products: nProducts ?? 0, deposits: nDeposits ?? 0, stocks: nStocks ?? 0, orders: nOrders ?? 0 },
       lastRuns: lastRuns ?? [],
+      freshness,
     };
   });
 
@@ -154,6 +171,8 @@ export const runBlingSync = createServerFn({ method: "POST" })
       tenantId: z.string().uuid(),
       resource: z.enum(["deposits", "products", "stock", "orders", "all"]),
       mode: z.enum(["full", "incremental"]).default("full"),
+      untilDone: z.boolean().default(false),
+      maxBatches: z.number().int().min(1).max(20).default(6),
     }).parse(d),
   )
   .handler(async ({ data, context }) => {
@@ -164,16 +183,41 @@ export const runBlingSync = createServerFn({ method: "POST" })
         out.deposits = await syncDeposits(data.tenantId);
       }
       if (data.resource === "products" || data.resource === "all") {
-        out.products = await syncProducts(data.tenantId, data.mode);
+        out.products = await runUntil(syncProducts, data.tenantId, data.mode, data.untilDone, data.maxBatches);
       }
       if (data.resource === "stock" || data.resource === "all") {
         out.stock = await syncStock(data.tenantId);
       }
       if (data.resource === "orders" || data.resource === "all") {
-        out.orders = await syncOrders(data.tenantId, data.mode);
+        out.orders = await runUntil(syncOrders, data.tenantId, data.mode, data.untilDone, data.maxBatches);
       }
       return { ok: true, ...out };
     } catch (e) {
       throw new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
   });
+
+type BatchedSyncFn = (
+  tenantId: string,
+  mode: "full" | "incremental",
+  opts?: { resumeRunId?: string },
+) => Promise<{ ok: true; count: number; done: boolean; nextPage: number | null; runId: string }>;
+
+async function runUntil(
+  fn: BatchedSyncFn,
+  tenantId: string,
+  mode: "full" | "incremental",
+  untilDone: boolean,
+  maxBatches: number,
+) {
+  let res = await fn(tenantId, mode);
+  let batches = 1;
+  let total = res.count;
+  while (untilDone && !res.done && batches < maxBatches) {
+    res = await fn(tenantId, mode, { resumeRunId: res.runId });
+    total += res.count;
+    batches++;
+  }
+  return { ...res, totalProcessed: total, batches, completed: res.done };
+}
+

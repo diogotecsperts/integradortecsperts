@@ -461,36 +461,45 @@ export type Database = {
       }
       bling_sync_runs: {
         Row: {
+          cursor_page: number | null
           error_message: string | null
           finished_at: string | null
+          heartbeat_at: string | null
           id: string
           items_processed: number
           meta: Json | null
           mode: string | null
+          next_page: number | null
           resource: string
           started_at: string
           status: Database["public"]["Enums"]["bling_sync_status"]
           tenant_id: string
         }
         Insert: {
+          cursor_page?: number | null
           error_message?: string | null
           finished_at?: string | null
+          heartbeat_at?: string | null
           id?: string
           items_processed?: number
           meta?: Json | null
           mode?: string | null
+          next_page?: number | null
           resource: string
           started_at?: string
           status?: Database["public"]["Enums"]["bling_sync_status"]
           tenant_id: string
         }
         Update: {
+          cursor_page?: number | null
           error_message?: string | null
           finished_at?: string | null
+          heartbeat_at?: string | null
           id?: string
           items_processed?: number
           meta?: Json | null
           mode?: string | null
+          next_page?: number | null
           resource?: string
           started_at?: string
           status?: Database["public"]["Enums"]["bling_sync_status"]
@@ -668,6 +677,7 @@ export type Database = {
         Returns: boolean
       }
       is_superadmin: { Args: never; Returns: boolean }
+      reap_stale_bling_runs: { Args: never; Returns: number }
     }
     Enums: {
       ai_message_role: "user" | "assistant" | "system"
