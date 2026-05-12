@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   createTenant, createTenantUser, listTenantsAdmin, setTenantStatus, setUserBlocked,
-  getTenantSettings, upsertTenantSettings,
+  getTenantSettings, upsertTenantSettings, getGlobalSettings,
 } from "@/lib/admin.functions";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import * as React from "react";
 import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink, X } from "lucide-react";
 import { toast } from "sonner";
