@@ -478,8 +478,17 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <SyncBtn label="Pedidos (full)" onClick={() => m.mutate({ resource: "orders", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Pedidos (incr.)" onClick={() => m.mutate({ resource: "orders", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
       </div>
+      <FullSyncBanner lastRuns={data?.lastRuns ?? []} />
       <button type="button" disabled={m.isPending || !data?.connected}
-        onClick={() => m.mutate({ resource: "all" })}
+        onClick={() => {
+          const ok = window.confirm(
+            "Sync FULL pode levar vários minutos (ou horas) dependendo do volume.\n\n" +
+            "• NÃO feche esta aba enquanto o botão estiver carregando.\n" +
+            "• Se você fechar, o request é abortado e a run morre no meio.\n\n" +
+            "Deseja continuar?"
+          );
+          if (ok) m.mutate({ resource: "all" });
+        }}
         className="w-full rounded-md border border-primary/40 bg-primary/10 py-2 text-xs font-medium text-primary disabled:opacity-50">
         <RefreshCw className="mr-1 inline h-3 w-3" /> Sync FULL (tudo)
       </button>
