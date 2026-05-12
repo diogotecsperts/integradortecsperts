@@ -47,6 +47,14 @@ function Dashboard() {
     enabled: !!tenantId,
   });
 
+  const fetchBlingStatus = useServerFn(getBlingStatus);
+  const blingStatusQ = useQuery({
+    queryKey: ["bling", "status", tenantId ?? "self"],
+    queryFn: () => fetchBlingStatus(tenantId ? { data: { tenantId } } : {}),
+    enabled: !!tenantId,
+    refetchInterval: 30000,
+  });
+
   const totals = data?.totals ?? { sales: 0, orders: 0, avgTicket: 0, customers: 0 };
   const monthly = data?.monthly ?? [];
   const bySituation = data?.bySituation ?? [];
