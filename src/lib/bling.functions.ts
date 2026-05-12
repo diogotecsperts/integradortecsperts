@@ -62,11 +62,13 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       .select("bling_client_id, bling_client_secret")
       .eq("tenant_id", tenantId).maybeSingle();
 
-    const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }, { count: nOrders }] = await Promise.all([
+    const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }, { count: nOrders }, { count: nContacts }, { count: nOrderItems }] = await Promise.all([
       supabaseAdmin.from("bling_products").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_deposits").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_stock_balances").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_orders").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_contacts").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_order_items").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
     ]);
     const { data: lastRuns } = await supabaseAdmin
       .from("bling_sync_runs")
@@ -75,7 +77,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       .order("started_at", { ascending: false })
       .limit(20);
 
-    const resources: Array<"orders" | "products" | "stock" | "deposits"> = ["orders", "products", "stock", "deposits"];
+    const resources: Array<"orders" | "products" | "stock" | "deposits" | "contacts"> = ["orders", "products", "stock", "deposits", "contacts"];
     const freshness = resources.map((res) => {
       const lastOk = (lastRuns ?? []).find((r) => r.resource === res && r.status === "ok");
       const lastAny = (lastRuns ?? []).find((r) => r.resource === res);
