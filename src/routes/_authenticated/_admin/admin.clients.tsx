@@ -299,41 +299,73 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
   );
 }
 
-const DEFAULT_AGENT_PERSONA_HINT = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts. Responda SEMPRE em PT-BR, de forma objetiva, profissional e consultiva.`;
-
 function AgentPromptField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const loadGlobal = useServerFn(getGlobalSettings);
+  const [loading, setLoading] = React.useState(false);
+
+  const handleLoadGlobal = async () => {
+    try {
+      setLoading(true);
+      const res = await loadGlobal();
+      onChange(res.default_agent_persona ?? "");
+      toast.success("Persona Global carregada no campo. Edite e clique em Salvar.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao carregar Persona Global");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Configurações da IA — Persona / Instruções de Negócio</div>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => onChange(DEFAULT_AGENT_PERSONA_HINT)}
-            className="rounded-md border border-border px-2 py-1 text-[10px] hover:bg-secondary"
-          >
-            Carregar Padrão
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className="rounded-md border border-border px-2 py-1 text-[10px] hover:bg-secondary"
-          >
-            Restaurar Padrão
-          </button>
+    <TooltipProvider delayDuration={150}>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Configurações da IA — Persona / Instruções de Negócio</div>
+          <div className="flex gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleLoadGlobal}
+                  disabled={loading}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] hover:bg-secondary disabled:opacity-50"
+                >
+                  {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                  Carregar Global
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                Copia a Persona Global atual (definida em Configurações do Sistema) para este campo, permitindo editar a partir dela. Não salva automaticamente — clique em "Salvar configurações" depois.
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onChange("")}
+                  className="rounded-md border border-border px-2 py-1 text-[10px] hover:bg-secondary"
+                >
+                  Limpar (usar Global)
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                Esvazia o campo. Com o campo vazio, este cliente passa a herdar automaticamente a Persona Global. Lembre-se de salvar.
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={10}
+          placeholder="Vazio = usa a Persona Global definida nas Configurações do Sistema. Escreva aqui a persona, tom e regras de negócio específicas deste cliente."
+          className="w-full resize-y rounded-lg border border-border bg-background/50 px-3 py-2.5 font-mono text-xs leading-relaxed outline-none ring-ring/30 focus:ring-2"
+        />
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          Hierarquia: <strong>Cliente</strong> → <strong>Global</strong> (Configurações do Sistema) → <strong>Padrão fixo</strong>. Use <em>Carregar Global</em> para começar a partir da persona global, ou <em>Limpar</em> para herdar dela automaticamente. O contexto temporal e as regras de formatação são adicionados automaticamente.
+        </p>
       </div>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        rows={10}
-        placeholder="Vazio = usa o prompt padrão global definido nas Configurações do Sistema. Escreva aqui a persona, tom e regras de negócio específicas deste cliente."
-        className="w-full resize-y rounded-lg border border-border bg-background/50 px-3 py-2.5 font-mono text-xs leading-relaxed outline-none ring-ring/30 focus:ring-2"
-      />
-      <p className="text-[10px] leading-relaxed text-muted-foreground">
-        Hierarquia: <strong>Cliente</strong> → <strong>Global</strong> (Configurações do Sistema) → <strong>Padrão fixo</strong>. O contexto temporal e as regras de formatação são adicionados automaticamente.
-      </p>
-    </div>
+    </TooltipProvider>
   );
 }
 
