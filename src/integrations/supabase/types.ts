@@ -549,6 +549,7 @@ export type Database = {
       }
       tenant_settings: {
         Row: {
+          agent_system_prompt: string | null
           bling_client_id: string | null
           bling_client_secret: string | null
           id: string
@@ -558,6 +559,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          agent_system_prompt?: string | null
           bling_client_id?: string | null
           bling_client_secret?: string | null
           id?: string
@@ -567,6 +569,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          agent_system_prompt?: string | null
           bling_client_id?: string | null
           bling_client_secret?: string | null
           id?: string
