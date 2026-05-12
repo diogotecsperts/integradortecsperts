@@ -506,6 +506,24 @@ export type Database = {
           },
         ]
       }
+      global_settings: {
+        Row: {
+          default_agent_persona: string
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          default_agent_persona: string
+          id?: string
+          updated_at?: string
+        }
+        Update: {
+          default_agent_persona?: string
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
