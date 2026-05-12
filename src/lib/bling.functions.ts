@@ -154,6 +154,8 @@ export const runBlingSync = createServerFn({ method: "POST" })
       tenantId: z.string().uuid(),
       resource: z.enum(["deposits", "products", "stock", "orders", "all"]),
       mode: z.enum(["full", "incremental"]).default("full"),
+      untilDone: z.boolean().default(false),
+      maxBatches: z.number().int().min(1).max(20).default(6),
     }).parse(d),
   )
   .handler(async ({ data, context }) => {
@@ -164,16 +166,41 @@ export const runBlingSync = createServerFn({ method: "POST" })
         out.deposits = await syncDeposits(data.tenantId);
       }
       if (data.resource === "products" || data.resource === "all") {
-        out.products = await syncProducts(data.tenantId, data.mode);
+        out.products = await runUntil(syncProducts, data.tenantId, data.mode, data.untilDone, data.maxBatches);
       }
       if (data.resource === "stock" || data.resource === "all") {
         out.stock = await syncStock(data.tenantId);
       }
       if (data.resource === "orders" || data.resource === "all") {
-        out.orders = await syncOrders(data.tenantId, data.mode);
+        out.orders = await runUntil(syncOrders, data.tenantId, data.mode, data.untilDone, data.maxBatches);
       }
       return { ok: true, ...out };
     } catch (e) {
       throw new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
   });
+
+type BatchedSyncFn = (
+  tenantId: string,
+  mode: "full" | "incremental",
+  opts?: { resumeRunId?: string },
+) => Promise<{ ok: true; count: number; done: boolean; nextPage: number | null; runId: string }>;
+
+async function runUntil(
+  fn: BatchedSyncFn,
+  tenantId: string,
+  mode: "full" | "incremental",
+  untilDone: boolean,
+  maxBatches: number,
+) {
+  let res = await fn(tenantId, mode);
+  let batches = 1;
+  let total = res.count;
+  while (untilDone && !res.done && batches < maxBatches) {
+    res = await fn(tenantId, mode, { resumeRunId: res.runId });
+    total += res.count;
+    batches++;
+  }
+  return { ...res, totalProcessed: total, batches, completed: res.done };
+}
+
