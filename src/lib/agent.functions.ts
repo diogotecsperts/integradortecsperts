@@ -32,23 +32,56 @@ CONTEXTO TEMPORAL (autoritativo, sobrepõe seu conhecimento interno):
 Use SEMPRE essas datas como referência. NUNCA assuma outro ano. Se o usuário disser "hoje", "este mês", "este ano" ou "últimos N dias", calcule a partir das datas acima.
 
 DIRETRIZES:
-- Responda SEMPRE em PT-BR, de forma objetiva e profissional.
-- NUNCA exponha seu raciocínio interno, cadeias de pensamento ou tags <think>. Responda apenas com o resultado final, limpo e direto.
-- NUNCA invente números. Sempre use as ferramentas (tools) para consultar os dados reais do tenant antes de responder qualquer pergunta sobre vendas, estoque ou produtos.
-- Ao chamar \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` quando o usuário pedir "últimos 30 dias" (a tool já usa esse default). Só passe datas explícitas quando o usuário citar período específico, sempre derivado do CONTEXTO TEMPORAL acima.
-- Se uma tool retornar \`data_availability\` indicando que existem dados em outro intervalo, refaça a chamada com o range correto antes de responder ao usuário.
-- Se uma tool retornar lista vazia mesmo com range correto, oriente o usuário a rodar o Sync no painel.
+- Responda SEMPRE em PT-BR, objetivo e profissional.
+- NUNCA exponha raciocínio interno ou tags <think>, <thinking>, <reasoning>, <tool_call>. Responda apenas com o resultado final, limpo.
+- NUNCA invente números. Use as ferramentas para consultar dados reais do tenant.
+- Em \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` para "últimos 30 dias". Só passe datas quando o usuário citar período específico, derivado do CONTEXTO TEMPORAL acima.
+- Se uma tool retornar \`data_availability\`, refaça a chamada com o range correto antes de responder.
+- Se uma tool retornar lista vazia mesmo com range correto, oriente o usuário a rodar o Sync.
 - Use no máximo 4 ferramentas por resposta.
-- Markdown: bullets (-) para listas curtas; tabelas apenas com 3+ colunas, com linha em branco antes/depois e quebras reais (\\n) entre cabeçalho, separador --- e dados.`;
+
+FORMATAÇÃO DE RESPOSTA (siga EXATAMENTE):
+- Listas curtas → bullets:
+  - Total: R$ 12.345,67
+  - Pedidos: 42
+  - Ticket médio: R$ 293,94
+- Tabelas (mín. 3 colunas, SEMPRE com LINHA EM BRANCO antes e depois, cada linha em sua própria quebra REAL):
+
+| Período | Pedidos | Total |
+| --- | --- | --- |
+| Jan/26 | 120 | R$ 37.988,00 |
+| Fev/26 | 98 | R$ 31.200,50 |
+
+- NUNCA escreva "\\n" como texto literal — use quebras reais.
+- NUNCA use tabela para 2 colunas — prefira bullets.\`;
 }
 
-// Remove cadeia de raciocínio do MiniMax-M2.7 (<think>...</think>) antes de exibir/persistir.
-function stripThinkTags(text: string): string {
+// Remove raciocínio interno e artefatos do MiniMax antes de exibir/persistir.
+function sanitizeAssistant(text: string): string {
   if (!text) return text;
-  return text
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/<\/?think>/gi, "")
-    .trim();
+  let out = text;
+  out = out.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, "");
+  out = out.replace(/<(think|thinking|reasoning)>[\s\S]*$/i, "");
+  out = out.replace(/<\/(think|thinking|reasoning)>/gi, "");
+  out = out.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  out = out.replace(/<\/?tool_call>/gi, "");
+  out = out.replace(/<\|[^|]*\|>/g, "");
+  return out.trim();
+}
+
+// Normaliza markdown: \n literal → newline real; garante linha em branco em torno de tabelas.
+function normalizeMarkdown(text: string): string {
+  if (!text) return text;
+  let out = text;
+  out = out.replace(/\\n/g, "\n");
+  out = out.replace(/([^\n])\n(\|[^\n]+\|)/g, "$1\n\n$2");
+  out = out.replace(/(\|[^\n]+\|)\n([^\n|])/g, "$1\n\n$2");
+  out = out.replace(/\n{3,}/g, "\n\n");
+  return out.trim();
+}
+
+function cleanReply(text: string): string {
+  return normalizeMarkdown(sanitizeAssistant(text));
 }
 
 type ChatMessage = {
