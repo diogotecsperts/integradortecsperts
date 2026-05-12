@@ -369,6 +369,14 @@ function AgentPromptField({ value, onChange }: { value: string; onChange: (v: st
   );
 }
 
+const RES_LABEL: Record<string, string> = {
+  contacts: "Contatos",
+  orders: "Pedidos",
+  products: "Produtos",
+  stock: "Estoque",
+  deposits: "Depósitos",
+};
+
 function BlingAdminPanel({ tenantId }: { tenantId: string }) {
   const status = useServerFn(getBlingStatus);
   const sync = useServerFn(runBlingSync);
@@ -381,7 +389,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
     refetchInterval: 10000,
   });
   const m = useMutation({
-    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "all"; mode?: "full" | "incremental" }) =>
+    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "contacts" | "all"; mode?: "full" | "incremental" }) =>
       sync({ data: { tenantId, resource: v.resource, mode: v.mode ?? "full", untilDone: (v.mode ?? "full") === "full", maxBatches: 12 } }),
     onSuccess: (res) => {
       const orders = (res as { orders?: { completed?: boolean; nextPage?: number | null } }).orders;
@@ -462,6 +470,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
       )}
 
       <div className="grid grid-cols-2 gap-2">
+        <SyncBtn label="Contatos" onClick={() => m.mutate({ resource: "contacts" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Depósitos" onClick={() => m.mutate({ resource: "deposits" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Produtos (full)" onClick={() => m.mutate({ resource: "products", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Produtos (incr.)" onClick={() => m.mutate({ resource: "products", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
@@ -478,7 +487,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <div className="max-h-40 space-y-1 overflow-auto text-[11px]">
           {data.lastRuns.slice(0, 8).map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-2 border-t border-border/40 pt-1">
-              <span className="font-medium">{r.resource}</span>
+              <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
               <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
               <span className="text-muted-foreground">{r.items_processed} itens</span>
               <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>

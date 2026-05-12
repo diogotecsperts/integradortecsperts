@@ -1,15 +1,57 @@
-# Plano: i18n dos nomes de recursos na lista de sync Bling
+## Objetivo
 
-## Diagnóstico
+Alinhar a tela `/admin/clients` (Integração Bling de cada cliente) com o painel do cliente final, resolvendo dois pontos:
 
-Em `src/routes/_authenticated/integracao-bling.tsx` já existe o map `RES_LABEL` (usado nos cards de status, linha 197) com os nomes em PT. A tabela de histórico (linha 232) ainda renderiza `r.resource` cru, em inglês.
+1. A lista de histórico de sync mostra os recursos em inglês (`orders`, `stock`, `products`, `deposits`, `contacts`).
+2. Não existe botão individual para `contacts`, embora ele apareça no histórico — fica a impressão de "categoria sem botão".
 
-## Mudança
+## Alterações (somente UI, frontend)
 
-- **Arquivo único**: `src/routes/_authenticated/integracao-bling.tsx`
-- Linha 232: trocar `{r.resource}` por `{RES_LABEL[r.resource as keyof typeof RES_LABEL] ?? r.resource}`.
-- Garantir que `RES_LABEL` cobre todos os recursos: `contacts → Contatos`, `orders → Pedidos`, `products → Produtos`, `stock → Estoque`, `deposits → Depósitos`. Se faltar alguma chave, adicionar.
+**Arquivo:** `src/routes/_authenticated/_admin/admin.clients.tsx`
+
+### 1. Mapa de labels PT-BR
+Adicionar, no topo do componente da linha de cliente, um mapa local (igual ao usado em `integracao-bling.tsx`):
+
+```ts
+const RES_LABEL: Record<string, string> = {
+  contacts: "Contatos",
+  orders: "Pedidos",
+  products: "Produtos",
+  stock: "Estoque",
+  deposits: "Depósitos",
+};
+```
+
+### 2. Histórico em português
+Na linha 481, trocar:
+```tsx
+<span className="font-medium">{r.resource}</span>
+```
+por:
+```tsx
+<span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
+```
+
+### 3. Botão individual "Contatos"
+Adicionar, junto aos demais `SyncBtn` (após "Pedidos (incr.)", linha 470), um botão para disparar somente contatos:
+
+```tsx
+<SyncBtn
+  label="Contatos"
+  onClick={() => m.mutate({ resource: "contacts" })}
+  loading={m.isPending}
+  disabled={!data?.connected}
+/>
+```
+
+E ampliar o tipo do `mutationFn` (linha 384) para aceitar `"contacts"`:
+```ts
+(v: { resource: "deposits" | "products" | "stock" | "orders" | "contacts" | "all"; mode?: "full" | "incremental" })
+```
+
+> Observação: a função `sync` no backend já aceita `contacts` como recurso (é o que o cron full e o botão "Sync FULL (tudo)" disparam). Esta mudança é apenas de UI/typing — nenhum arquivo `*.server.ts` é alterado, nenhuma string enviada ao banco muda, nenhuma lógica de sync é tocada.
 
 ## Fora de escopo
 
-- Nenhuma alteração em backend, sync, RPC ou banco — strings enviadas/persistidas seguem em inglês.
+- Backend, RPCs, edge functions, schema, RLS, cron — nada é tocado.
+- Strings persistidas em `bling_sync_runs` continuam em inglês (apenas a renderização muda).
