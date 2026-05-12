@@ -234,47 +234,106 @@ const SITUACAO_NOMES: Record<number, string> = {
   24: "Verificado",
 };
 
-export async function syncOrders(tenantId: string, mode: "full" | "incremental" = "full") {
-  const runId = await startRun(tenantId, "orders", mode);
-  let count = 0;
-  let dataAlteracaoInicial: string | undefined;
-  if (mode === "incremental") {
-    const { data } = await supabaseAdmin
-      .from("bling_sync_runs")
-      .select("finished_at")
-      .eq("tenant_id", tenantId).eq("resource", "orders").eq("status", "ok")
-      .order("finished_at", { ascending: false }).limit(1).maybeSingle();
-    if (data?.finished_at) {
-      const d = new Date(data.finished_at);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      dataAlteracaoInicial = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-    }
-  }
-  try {
-    let pagina = 1;
-    for (;;) {
-      const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
-        tenantId, "/pedidos/vendas",
-        { searchParams: { pagina, limite: 100, dataAlteracaoInicial } },
-      );
-      const list = resp?.data ?? [];
-      if (list.length === 0) break;
+export async function syncOrders(
+  tenantId: string,
+  mode: "full" | "incremental" = "full",
+  opts?: { resumeRunId?: string },
+): Promise<BatchResult> {
+  return runPaginatedBatch({
+    tenantId,
+    resource: "orders",
+    mode,
+    resumeRunId: opts?.resumeRunId,
+    path: "/pedidos/vendas",
+    upsert: async (list) => {
       const rows = list.map(mapOrder(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_orders")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
-      count += rows.length;
-      if (list.length < 100) break;
+      return rows.length;
+    },
+  });
+}
+
+// ===================== Helper genérico de batching paginado =====================
+async function getLastOkFinishedAt(tenantId: string, resource: Resource) {
+  const { data } = await supabaseAdmin
+    .from("bling_sync_runs")
+    .select("finished_at")
+    .eq("tenant_id", tenantId).eq("resource", resource).eq("status", "ok")
+    .order("finished_at", { ascending: false }).limit(1).maybeSingle();
+  return data?.finished_at ?? null;
+}
+function toBlingDate(iso: string) {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+async function runPaginatedBatch(args: {
+  tenantId: string;
+  resource: Resource;
+  mode: "full" | "incremental";
+  resumeRunId?: string;
+  path: string;
+  upsert: (list: Array<Record<string, unknown>>) => Promise<number>;
+}): Promise<BatchResult> {
+  const { tenantId, resource, mode, path, upsert } = args;
+  let runId: string;
+  let pagina: number;
+  let count = 0;
+  let dataAlteracaoInicial: string | undefined;
+
+  if (args.resumeRunId) {
+    const { data } = await supabaseAdmin
+      .from("bling_sync_runs")
+      .select("id, next_page, items_processed, meta, mode")
+      .eq("id", args.resumeRunId).maybeSingle();
+    if (!data) throw new Error("Run para retomar não encontrada");
+    runId = data.id;
+    pagina = data.next_page ?? 1;
+    count = data.items_processed ?? 0;
+    const m = (data.meta as { dataAlteracaoInicial?: string } | null) ?? null;
+    dataAlteracaoInicial = m?.dataAlteracaoInicial;
+  } else {
+    if (mode === "incremental") {
+      const last = await getLastOkFinishedAt(tenantId, resource);
+      if (last) dataAlteracaoInicial = toBlingDate(last);
+    }
+    runId = await startRun(tenantId, resource, mode, { mode, dataAlteracaoInicial });
+    pagina = 1;
+  }
+
+  try {
+    for (let i = 0; i < PAGES_PER_BATCH; i++) {
+      const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
+        tenantId, path,
+        { searchParams: { pagina, limite: 100, dataAlteracaoInicial } },
+      );
+      const list = resp?.data ?? [];
+      if (list.length === 0) {
+        await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
+        return { ok: true, count, done: true, nextPage: null, runId };
+      }
+      const n = await upsert(list);
+      count += n;
+      await heartbeat(runId, pagina, count);
+      if (list.length < 100) {
+        await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
+        return { ok: true, count, done: true, nextPage: null, runId };
+      }
       pagina++;
     }
-    await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
-    return { ok: true, count };
+    // Atingiu o limite do batch — pausa para o próximo tick retomar.
+    await pauseRun(runId, pagina, count);
+    return { ok: true, count, done: false, nextPage: pagina, runId };
   } catch (e) {
     await endRun(runId, false, count, errMessage(e), { mode, dataAlteracaoInicial });
     throw e;
   }
 }
+
 
 function mapOrder(tenantId: string) {
   return (o: Record<string, unknown>) => {
