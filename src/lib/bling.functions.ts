@@ -70,10 +70,26 @@ export const getBlingStatus = createServerFn({ method: "GET" })
     ]);
     const { data: lastRuns } = await supabaseAdmin
       .from("bling_sync_runs")
-      .select("id, resource, mode, status, started_at, finished_at, items_processed, error_message")
+      .select("id, resource, mode, status, started_at, finished_at, items_processed, error_message, cursor_page, next_page, heartbeat_at")
       .eq("tenant_id", tenantId)
       .order("started_at", { ascending: false })
-      .limit(15);
+      .limit(20);
+
+    const resources: Array<"orders" | "products" | "stock" | "deposits"> = ["orders", "products", "stock", "deposits"];
+    const freshness = resources.map((res) => {
+      const lastOk = (lastRuns ?? []).find((r) => r.resource === res && r.status === "ok");
+      const lastAny = (lastRuns ?? []).find((r) => r.resource === res);
+      const lastOkAt = lastOk?.finished_at ?? null;
+      const ageSeconds = lastOkAt ? Math.max(0, Math.floor((Date.now() - new Date(lastOkAt).getTime()) / 1000)) : null;
+      return {
+        resource: res,
+        lastOkAt,
+        ageSeconds,
+        lastStatus: lastAny?.status ?? null,
+        inProgress: Boolean(lastAny && lastAny.status === "running" && lastAny.next_page),
+        nextPage: lastAny?.next_page ?? null,
+      };
+    });
 
     return {
       tenantId,
@@ -84,6 +100,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       lastRefreshAt: cred?.last_refresh_at ?? null,
       counts: { products: nProducts ?? 0, deposits: nDeposits ?? 0, stocks: nStocks ?? 0, orders: nOrders ?? 0 },
       lastRuns: lastRuns ?? [],
+      freshness,
     };
   });
 
