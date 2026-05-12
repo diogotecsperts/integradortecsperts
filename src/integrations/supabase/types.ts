@@ -668,6 +668,37 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      agent_low_stock: {
+        Args: { _limit?: number; _tenant_id: string; _threshold?: number }
+        Returns: {
+          codigo: string
+          nome: string
+          produto_id: number
+          saldo_total: number
+        }[]
+      }
+      agent_sales_availability: {
+        Args: { _tenant_id: string }
+        Returns: {
+          earliest: string
+          latest: string
+          total_orders: number
+        }[]
+      }
+      agent_summarize_sales: {
+        Args: {
+          _from: string
+          _group_by?: string
+          _tenant_id: string
+          _to: string
+        }
+        Returns: {
+          cnt: number
+          customers: number
+          group_key: string
+          total: number
+        }[]
+      }
       get_user_tenant: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {

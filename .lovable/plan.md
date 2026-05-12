@@ -1,96 +1,49 @@
 ## Objetivo
 
-Tornar a sincronização Bling resiliente e automática: pedidos em blocos com checkpoint, cron a cada 20min para todos os tenants conectados, indicador de frescor na UI, e auto-recuperação de runs travadas em "running".
+Eliminar timeouts nas tools de BI do agente movendo a agregação para o Postgres via RPCs `SECURITY DEFINER`, evitando trazer milhares de linhas para o runtime do servidor.
 
----
+## Mudanças
 
-## 1. Banco de dados (uma migration)
+### 1. Migration — novas RPCs agregadas
 
-**Adicionar colunas em `bling_sync_runs`** para suportar checkpoint e heartbeat:
-- `cursor_page int` — última página processada com sucesso no batch atual.
-- `next_page int` — próxima página a processar (null = concluído).
-- `heartbeat_at timestamptz` — atualizado a cada página processada.
-- Índice `(tenant_id, resource, status, started_at desc)`.
+Criar funções no schema `public`, todas com `SECURITY DEFINER`, `SET search_path = public`, recebendo `_tenant_id uuid` como primeiro argumento (chamadas via `supabaseAdmin`, então o filtro por tenant é explícito):
 
-**Reaper SQL function** `public.reap_stale_bling_runs()`:
-- Marca como `error` (msg "Stale: sem heartbeat há >5min") qualquer run com `status='running'` e `heartbeat_at < now() - interval '5 minutes'` (ou `started_at` se heartbeat null).
-- Chamada pelo cron antes de cada tick e via pg_cron de 5 em 5min como rede de segurança.
+- **`agent_summarize_sales(_tenant_id, _from date, _to date, _group_by text)`**
+  - Retorna `TABLE(group_key text, total numeric, count bigint, customers bigint)`.
+  - `_group_by` aceita `'none' | 'day' | 'month' | 'situacao'`.
+  - Usa `SUM(valor_total)`, `COUNT(*)`, `COUNT(DISTINCT cliente_id)` agrupado conforme parâmetro (ou sem `GROUP BY` quando `none`, devolvendo 1 linha com `group_key = NULL`).
+  - Filtra `tenant_id = _tenant_id AND data BETWEEN _from AND _to`.
 
----
+- **`agent_sales_availability(_tenant_id)`**
+  - Retorna `TABLE(earliest date, latest date, total_orders bigint)`.
+  - Usado apenas quando o resultado principal vier vazio (preserva o `data_availability` atual).
 
-## 2. Refatorar `syncOrders` (batching com checkpoint)
+- **`agent_low_stock(_tenant_id, _threshold numeric, _limit int)`**
+  - Retorna `TABLE(produto_id bigint, saldo_total numeric, codigo text, nome text)`.
+  - `SELECT produto_id, SUM(saldo_fisico) ... FROM bling_stock_balances WHERE tenant_id = _tenant_id GROUP BY produto_id HAVING SUM(saldo_fisico) <= _threshold ORDER BY saldo_total ASC LIMIT _limit`, com `LEFT JOIN bling_products` para enriquecer `codigo`/`nome` em uma única query.
 
-Em `src/lib/bling/sync.server.ts`:
+Índices a verificar/criar se ausentes (apenas se não existirem):
+- `bling_orders (tenant_id, data)`
+- `bling_stock_balances (tenant_id, produto_id)`
 
-- Constante `ORDERS_PAGES_PER_BATCH = 5` (5 páginas × 100 = 500 pedidos por execução).
-- Nova assinatura: `syncOrders(tenantId, mode, opts?: { resumeRunId?: string })`.
-- Fluxo:
-  1. Se `resumeRunId`, retoma daquela run lendo `next_page` e `meta.dataAlteracaoInicial`. Senão, cria run nova (com `cursor_page=0`, `next_page=1`, e calcula `dataAlteracaoInicial` para incremental).
-  2. Loop de no máximo `ORDERS_PAGES_PER_BATCH` páginas:
-     - Faz `blingFetch` da página, upsert dos pedidos.
-     - Atualiza `cursor_page`, `heartbeat_at=now()`, incrementa `items_processed` no run **a cada página**.
-     - Se a página retornou < 100 itens → terminou tudo: `status=ok`, `next_page=null`, `finished_at=now()`. Retorna `{ done: true }`.
-  3. Se atingiu o limite do batch: deixa `status='running'`, salva `next_page = pagina+1`, retorna `{ done: false, nextPage }` — o cron retomará no próximo tick.
-- O botão manual "Full Sync" no admin chama o mesmo método em loop até `done: true` (com proteção: máx N batches por clique para não travar a request HTTP), exibindo progresso ao recarregar status.
-- Aplicar o mesmo padrão de batching em `syncProducts` (mesma estrutura paginada). `syncDeposits` e `syncStock` continuam single-shot (volume baixo).
+### 2. `src/lib/agent.functions.ts` — refator das tools
 
-**Rate limit (máx 4 req/s):** ajustar `MIN_INTERVAL_MS` em `bling/client.server.ts` de 350 → 260ms (≈3.8 req/s, com folga). Manter retry em 429.
+- **`summarize_sales`**: substituir o `select("data, valor_total, ...").limit(10000)` por `supabaseAdmin.rpc("agent_summarize_sales", { _tenant_id, _from, _to, _group_by })`. Construir o resultado final (`total`, `count`, `customers`, `ticket_medio`, `groups`) a partir das linhas agregadas. Se vier vazio, chamar `agent_sales_availability` para o bloco `data_availability` + `hint` (mantém comportamento atual).
+- **`low_stock_alerts`**: substituir o download de saldos + map em JS por uma única chamada `supabaseAdmin.rpc("agent_low_stock", { _tenant_id, _threshold, _limit })`. Remover o segundo `select` em `bling_products` (join feito no SQL).
+- **`search_products`**: manter (já tem `limit ≤ 20`), apenas garantir `.select` enxuto (sem `*`).
+- **`get_stock_for_product`**: manter (filtra por `produto_id`, volume limitado por produto). Trocar `select("*")` implícitos? Já usa colunas específicas — sem mudanças.
 
----
+### 3. Diretrizes preservadas
 
-## 3. Cron automático
+- Nenhuma mudança em prompts, fluxo de tool-calling, persona ou UI.
+- Todas as queries continuam escopadas por `tenant_id`.
+- Nenhuma tool pode mais fazer `select` sem agregação em `bling_orders` ou `bling_stock_balances`.
 
-**Server route:** `src/routes/api/public/hooks/bling-sync-tick.ts` (POST).
-- Auth via header `apikey` = anon key (padrão `/api/public/*`).
-- Lógica:
-  1. Chama `reap_stale_bling_runs()` (RPC).
-  2. Para cada `bling_credentials` ativa (não expirada há muito):
-     - Procura run em `running` com `next_page not null` para `(tenant, resource)` → retoma com `syncOrders/Products(..., { resumeRunId })`.
-     - Senão, dispara incremental: `syncDeposits` (1×/dia heurística), `syncProducts(incremental)`, `syncStock`, `syncOrders(incremental)`.
-  3. Catch por tenant para não derrubar o tick inteiro.
-- Tempo total controlado: processa no máximo `ORDERS_PAGES_PER_BATCH` por tenant por tick.
+## Arquivos
 
-**Agendamento via `pg_cron` + `pg_net`** (criado via `supabase--insert`, não migration):
-- Job `bling-sync-tick` a cada 20min chamando a route com `apikey`.
-- Job `bling-reaper` a cada 5min chamando `reap_stale_bling_runs()` direto (defensivo).
+- **Migration nova**: `agent_summarize_sales`, `agent_sales_availability`, `agent_low_stock` (+ índices condicionais).
+- **Editado**: `src/lib/agent.functions.ts` (apenas os dois handlers).
 
----
+## Fora de escopo
 
-## 4. UI — indicador de frescor
-
-**Helper** em `bling.functions.ts`: `getBlingStatus` já retorna `lastRuns`. Adicionar campo derivado `freshness: { resource, lastOkAt, ageSeconds, status }[]` calculado no servidor por recurso (orders/products/stock).
-
-**Componentes:**
-- `src/routes/_authenticated/integracao-bling.tsx` (cliente): nova seção "Frescor dos dados" com cards por recurso mostrando "Atualizado há 12 min" (formatado relativo) + badge da última run (`ok`/`error`/`running` com `next_page` indicando "em andamento, página X").
-- `src/routes/_authenticated/dashboard.tsx`: banner compacto no topo "Dados Bling atualizados há X min" (pegando o mais antigo entre orders/products/stock). Usa `useQuery` com `refetchInterval: 30s`.
-- Util `formatRelative(date)` em `src/lib/utils.ts` (sem dependência nova; "agora", "X min", "X h", "X d").
-
----
-
-## 5. Resiliência
-
-- **Heartbeat:** cada página processada faz `update bling_sync_runs set heartbeat_at = now(), cursor_page = X, items_processed = Y where id = ?`.
-- **Reaper:** descrito acima — RPC + cron de 5min + chamada no início de cada tick.
-- **Idempotência:** upserts existentes em `(tenant_id, bling_id)` garantem que reprocessar uma página é seguro.
-- **Retry no tick:** se `syncOrders` lançar exceção parcial, `endRun` marca `error` e o próximo tick simplesmente inicia uma nova run incremental (não retoma a com erro).
-
----
-
-## Detalhes técnicos
-
-**Arquivos a criar:**
-- `supabase/migrations/<ts>_bling_sync_batching.sql` — colunas + função `reap_stale_bling_runs`.
-- `src/routes/api/public/hooks/bling-sync-tick.ts` — endpoint do cron.
-
-**Arquivos a editar:**
-- `src/lib/bling/sync.server.ts` — refator de `syncOrders`/`syncProducts` para batching com checkpoint + heartbeat por página.
-- `src/lib/bling/client.server.ts` — `MIN_INTERVAL_MS` 350→260.
-- `src/lib/bling.functions.ts` — `getBlingStatus` retorna `freshness[]`; `runBlingSync` aceita parâmetro `untilDone` para o botão Full Sync.
-- `src/routes/_authenticated/integracao-bling.tsx` — seção de frescor e badges com `next_page`.
-- `src/routes/_authenticated/dashboard.tsx` — banner de frescor.
-- `src/lib/utils.ts` — `formatRelative`.
-- `src/integrations/supabase/types.ts` — regenerado pela migration.
-
-**SQL inserts (não-migration, executados após approval):** agendamento `pg_cron` apontando para `https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-tick` com `apikey: <ANON_KEY>`.
-
-**Fora de escopo:** mudar persona/IA, alterar UI do admin de clientes, adicionar novos recursos Bling.
+Sync do Bling, UI do admin, persona/IA, novos recursos.

@@ -208,84 +208,63 @@ async function execTool(name: string, args: Record<string, unknown>, tenantId: s
       const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
       const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
       const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
-      const groupBy = (args.group_by as string) ?? "none";
-      const { data } = await supabaseAdmin
-        .from("bling_orders")
-        .select("data, valor_total, situacao_nome, situacao_id, cliente_id")
-        .eq("tenant_id", tenantId)
-        .gte("data", from).lte("data", to)
-        .limit(10000);
-      const rows = data ?? [];
-      if (rows.length === 0) {
-        const { data: diag } = await supabaseAdmin
-          .from("bling_orders")
-          .select("data")
-          .eq("tenant_id", tenantId)
-          .order("data", { ascending: true })
-          .limit(1);
-        const { data: diag2 } = await supabaseAdmin
-          .from("bling_orders")
-          .select("data")
-          .eq("tenant_id", tenantId)
-          .order("data", { ascending: false })
-          .limit(1);
-        const { count } = await supabaseAdmin
-          .from("bling_orders")
-          .select("*", { count: "exact", head: true })
-          .eq("tenant_id", tenantId);
+      const groupBy = ((args.group_by as string) ?? "none") as "none" | "day" | "month" | "situacao";
+
+      const { data: agg, error: aggErr } = await supabaseAdmin.rpc("agent_summarize_sales", {
+        _tenant_id: tenantId, _from: from, _to: to, _group_by: groupBy,
+      });
+      if (aggErr) return { error: aggErr.message };
+      const rows = (agg ?? []) as Array<{ group_key: string | null; total: number | string; cnt: number | string; customers: number | string }>;
+
+      const totalAll = rows.reduce((s, r) => s + Number(r.total || 0), 0);
+      const countAll = rows.reduce((s, r) => s + Number(r.cnt || 0), 0);
+      // customers por grupo soma overcount entre grupos; quando 'none' há 1 linha (correto).
+      const customersAll = groupBy === "none"
+        ? Number(rows[0]?.customers ?? 0)
+        : rows.reduce((s, r) => s + Number(r.customers || 0), 0);
+
+      if (countAll === 0) {
+        const { data: diag } = await supabaseAdmin.rpc("agent_sales_availability", { _tenant_id: tenantId });
+        const d = (diag ?? [])[0] as { earliest: string | null; latest: string | null; total_orders: number | string } | undefined;
         return {
           from, to, total: 0, count: 0, customers: 0, ticket_medio: 0,
           data_availability: {
-            earliest: diag?.[0]?.data ?? null,
-            latest: diag2?.[0]?.data ?? null,
-            total_orders: count ?? 0,
+            earliest: d?.earliest ?? null,
+            latest: d?.latest ?? null,
+            total_orders: Number(d?.total_orders ?? 0),
           },
           hint: "Janela vazia. Use 'data_availability' para refazer a chamada com um range que cubra os dados existentes.",
         };
       }
-      const total = rows.reduce((s, r) => s + Number(r.valor_total || 0), 0);
-      const count = rows.length;
-      const customers = new Set(rows.map((r) => r.cliente_id).filter(Boolean)).size;
-      const ticket = count ? total / count : 0;
-      const base = { from, to, total, count, customers, ticket_medio: ticket };
+
+      const base = {
+        from, to,
+        total: totalAll,
+        count: countAll,
+        customers: customersAll,
+        ticket_medio: countAll ? totalAll / countAll : 0,
+      };
       if (groupBy === "none") return base;
-      const map = new Map<string, { key: string; total: number; count: number }>();
-      for (const r of rows) {
-        let key = "—";
-        if (groupBy === "day") key = (r.data ?? "").slice(0, 10);
-        else if (groupBy === "month") key = (r.data ?? "").slice(0, 7);
-        else if (groupBy === "situacao") key = r.situacao_nome ?? `Sit ${r.situacao_id ?? "?"}`;
-        const prev = map.get(key) ?? { key, total: 0, count: 0 };
-        prev.total += Number(r.valor_total || 0); prev.count += 1;
-        map.set(key, prev);
-      }
-      return { ...base, groups: [...map.values()].sort((a, b) => b.total - a.total) };
+      const groups = rows
+        .map((r) => ({ key: r.group_key ?? "—", total: Number(r.total || 0), count: Number(r.cnt || 0) }))
+        .sort((a, b) => b.total - a.total);
+      return { ...base, groups };
     }
     case "low_stock_alerts": {
       const threshold = Number(args.threshold ?? 5);
       const limit = Math.min(Number(args.limit ?? 20), 50);
-      const { data: balances } = await supabaseAdmin
-        .from("bling_stock_balances")
-        .select("produto_id, saldo_fisico")
-        .eq("tenant_id", tenantId)
-        .limit(20000);
-      const totals = new Map<number, number>();
-      for (const b of balances ?? []) {
-        totals.set(b.produto_id, (totals.get(b.produto_id) ?? 0) + Number(b.saldo_fisico));
-      }
-      const lowIds = [...totals.entries()].filter(([, v]) => v <= threshold)
-        .sort((a, b) => a[1] - b[1]).slice(0, limit);
-      if (lowIds.length === 0) return { results: [], threshold };
-      const { data: prods } = await supabaseAdmin
-        .from("bling_products")
-        .select("bling_id, codigo, nome")
-        .eq("tenant_id", tenantId)
-        .in("bling_id", lowIds.map(([id]) => id));
-      const pmap = new Map((prods ?? []).map((p) => [p.bling_id, p]));
+      const { data, error } = await supabaseAdmin.rpc("agent_low_stock", {
+        _tenant_id: tenantId, _threshold: threshold, _limit: limit,
+      });
+      if (error) return { error: error.message };
+      const rows = (data ?? []) as Array<{ produto_id: number; saldo_total: number | string; codigo: string | null; nome: string | null }>;
       return {
         threshold,
-        results: lowIds.map(([id, total]) => ({
-          produto_id: id, saldo_total: total, ...(pmap.get(id) ?? {}),
+        results: rows.map((r) => ({
+          produto_id: r.produto_id,
+          saldo_total: Number(r.saldo_total),
+          codigo: r.codigo,
+          nome: r.nome,
         })),
       };
     }
