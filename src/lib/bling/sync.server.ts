@@ -62,7 +62,7 @@ async function endRun(id: string, ok: boolean, items: number, errMsg?: string, m
     status: ok ? "ok" : "error",
     finished_at: new Date().toISOString(),
     items_processed: items,
-    error_message: errMsg ?? null,
+    error_message: errMsg ? errMsg.slice(0, 1000) : null,
     next_page: null,
     heartbeat_at: new Date().toISOString(),
   };
