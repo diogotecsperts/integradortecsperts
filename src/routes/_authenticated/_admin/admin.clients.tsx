@@ -240,6 +240,7 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
   });
   const [form, setForm] = React.useState({
     bling_client_id: "", bling_client_secret: "", resend_api_key: "", minimax_api_key: "",
+    agent_system_prompt: "",
   });
   React.useEffect(() => {
     if (data) setForm({
@@ -247,6 +248,7 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
       bling_client_secret: data.bling_client_secret ?? "",
       resend_api_key: data.resend_api_key ?? "",
       minimax_api_key: data.minimax_api_key ?? "",
+      agent_system_prompt: data.agent_system_prompt ?? "",
     });
   }, [data]);
   const m = useMutation({
@@ -272,11 +274,53 @@ function TenantSettingsForm({ tenantId, onDone }: { tenantId: string; onDone: ()
         <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Minimax (Agente IA)</div>
         <SecretInput label="API Key" value={form.minimax_api_key} onChange={(v) => setForm({ ...form, minimax_api_key: v })} />
       </div>
+      <AgentPromptField
+        value={form.agent_system_prompt}
+        onChange={(v) => setForm({ ...form, agent_system_prompt: v })}
+      />
       <button disabled={m.isPending} className="w-full rounded-lg py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50" style={{ background: "var(--gradient-primary)" }}>
         {m.isPending ? "Salvando..." : "Salvar configurações"}
       </button>
       <BlingAdminPanel tenantId={tenantId} />
     </form>
+  );
+}
+
+const DEFAULT_AGENT_PERSONA_HINT = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts. Responda SEMPRE em PT-BR, de forma objetiva, profissional e consultiva.`;
+
+function AgentPromptField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Configurações da IA — Persona / Instruções de Negócio</div>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={() => onChange(DEFAULT_AGENT_PERSONA_HINT)}
+            className="rounded-md border border-border px-2 py-1 text-[10px] hover:bg-secondary"
+          >
+            Carregar Padrão
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="rounded-md border border-border px-2 py-1 text-[10px] hover:bg-secondary"
+          >
+            Restaurar Padrão
+          </button>
+        </div>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={10}
+        placeholder="Vazio = usa o prompt padrão do sistema. Escreva aqui a persona, tom e regras de negócio específicas deste cliente."
+        className="w-full resize-y rounded-lg border border-border bg-background/50 px-3 py-2.5 font-mono text-xs leading-relaxed outline-none ring-ring/30 focus:ring-2"
+      />
+      <p className="text-[10px] leading-relaxed text-muted-foreground">
+        O contexto temporal (datas atuais) e as regras de formatação Markdown / anti-vazamento de raciocínio são adicionados automaticamente — você só edita a persona e as instruções de negócio.
+      </p>
+    </div>
   );
 }
 

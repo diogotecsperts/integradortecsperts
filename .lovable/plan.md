@@ -1,84 +1,94 @@
-## Diagnóstico
+## Avaliação da instrução do Antigravity
 
-### 1. Vazamento de `<think>` — causas reais
-- **Backend (`stripThinkTags`)** só remove pares fechados `<think>...</think>`. Se o MiniMax-M2.7 truncar a resposta (max_tokens=2048) ou enviar a tag aberta sem fechamento, o regex `/<think>[\s\S]*?<\/think>/gi` não casa e o conteúdo passa inteiro. Também não cobre variantes vistas no MiniMax (`<thinking>`, `<reasoning>`, `</think>` órfão no início).
-- **Persistência histórica:** mensagens `assistant` salvas em `ai_messages` antes do fix continuam com `<think>` cru e voltam ao chat via `history`. O frontend renderiza essas mensagens antigas direto pelo `ReactMarkdown`.
-- **Frontend (`cleanAssistant`)** tem o mesmo regex limitado. Não há fallback para tag aberta.
+O plano encaixa **bem** na arquitetura atual (já existe `tenant_settings` + `getTenantSettings`/`upsertTenantSettings` + modal "Configurações" do superadmin). Porém tenho **2 ressalvas técnicas** que recomendo alinhar antes de implementar:
 
-### 2. Tabelas quebradas — causas reais
-- O System Prompt instrui "quebras reais (`\n`)" mas como **texto** dentro de uma instrução — o modelo às vezes responde com `\n` **literal** (dois caracteres: barra + n), que o React-Markdown renderiza como string e a tabela vira uma linha só.
-- Falta exemplo concreto de tabela bem-formada no prompt; modelos pequenos como o M2.7 copiam o formato do exemplo muito melhor que seguem regras abstratas.
-- React-Markdown + remark-gfm exige **linha em branco antes** do `|cabeçalho|` para parsear como tabela. Sem isso, vira parágrafo com pipes inline.
-- Não há normalizador no servidor que conserte `\n` literal nem que garanta a linha em branco.
+### Ressalva 1 — escopo do "custom prompt" (importante)
+O prompt atual contém DUAS camadas críticas que, se forem sobrescritas pelo superadmin, **quebram o produto**:
 
-### 3. Renderização frontend
-- `remark-gfm` está configurado corretamente (já instalado e passado em `remarkPlugins`).
-- Classes prose para `table/th/td` estão presentes — OK.
-- O problema NÃO é o componente, é o markdown bruto chegando malformado.
+1. **Contexto temporal** (datas do dia) — o plano já cobre.
+2. **Regras de formatação Markdown e anti-vazamento de tags** (`<think>`, `<tool_call>`, formato de tabela com linha em branco) — o plano **não cobre**, e foram justamente as correções que acabamos de aplicar nas mensagens anteriores. Se um admin colar um prompt sem essas regras, o vazamento de raciocínio e tabelas quebradas voltam imediatamente.
+
+**Recomendação:** tratar o `agent_system_prompt` como **PERSONA/REGRAS DE NEGÓCIO** (ex.: "Você é o consultor da Loja X, foca em margem", "responda sempre em tom formal", "nunca recomende descontos > 10%"), e manter como camadas **fixas e não-editáveis** o bloco de **CONTEXTO TEMPORAL** + **FORMATAÇÃO + ANTI-VAZAMENTO**.
+
+Estrutura final do prompt enviado ao MiniMax:
+```
+[BLOCO FIXO 1 — CONTEXTO TEMPORAL injetado em runtime]
+[BLOCO CUSTOMIZÁVEL — agent_system_prompt do tenant, OU fallback padrão de "Especialista em BI/ERP"]
+[BLOCO FIXO 2 — DIRETRIZES DE TOOLS + FORMATAÇÃO + ANTI-VAZAMENTO]
+```
+
+Isso preserva a UI premium independente do que o admin escrever.
+
+### Ressalva 2 — UX do "Restaurar Padrão"
+"Limpar o campo" ≠ "ver o padrão". Sugiro:
+- Botão **"Carregar Padrão como base"** → preenche o textarea com o texto do prompt-persona padrão (para o admin editar a partir dele).
+- Botão **"Restaurar Padrão"** → grava `NULL` no banco (campo vazio = usa fallback).
+- Placeholder no textarea quando vazio: "Vazio = usa o prompt padrão do sistema."
 
 ---
 
-## Plano de Correção
+## Plano de Correção (após confirmação das ressalvas)
 
-### A. `src/lib/agent.functions.ts` — sanitização robusta
+### 1. Migration
 
-1. Reescrever `stripThinkTags` → `sanitizeAssistant(text)`:
-   - Remover pares fechados: `<think>...</think>`, `<thinking>...</thinking>`, `<reasoning>...</reasoning>` (case-insensitive, multiline).
-   - **Cobrir tag aberta sem fechamento:** se encontrar `<think>` sem `</think>` correspondente, remover de `<think>` até o fim.
-   - Remover tags órfãs: `</think>`, `</thinking>`, `</reasoning>` soltas no início.
-   - Remover `<tool_call>` e `<|...|>` artifacts conhecidos do MiniMax.
-   - Trim final.
-
-2. **Normalizador de markdown** `normalizeMarkdown(text)`:
-   - Substituir `\n` literal (backslash + n) por newline real: `text.replace(/\\n/g, "\n")`.
-   - Garantir linha em branco antes/depois de blocos de tabela (regex que detecta `^\s*\|.+\|\s*$` consecutivos e injeta `\n` antes/depois quando faltar).
-   - Colapsar 3+ newlines em 2.
-
-3. Aplicar `normalizeMarkdown(sanitizeAssistant(content))` antes de:
-   - Persistir em `ai_messages` (assistant).
-   - Retornar `reply` para o cliente.
-
-### B. `src/lib/agent.functions.ts` — System Prompt explícito
-
-Reformular a seção de Markdown para usar **exemplo literal** em vez de regras abstratas:
-
+Adicionar coluna em `tenant_settings`:
+```sql
+ALTER TABLE public.tenant_settings
+  ADD COLUMN agent_system_prompt text;
 ```
-FORMATAÇÃO DE RESPOSTA:
-- Para listas curtas, use bullets:
-  - Item 1: valor
-  - Item 2: valor
-- Para tabelas (mínimo 3 colunas, sempre com LINHA EM BRANCO antes e depois):
+Sem default (NULL = usa fallback). Sem alteração de RLS (já é admin-only).
 
-| Coluna A | Coluna B | Coluna C |
-| --- | --- | --- |
-| dado | dado | dado |
+### 2. Backend — `src/lib/agent.functions.ts`
 
-- NUNCA escreva "\n" como texto literal. Use quebras de linha reais.
-- NUNCA use tabela para 2 colunas — use bullets.
-- NUNCA exponha tags <think>, <thinking>, <reasoning> ou <tool_call>.
-```
+a) Refatorar `buildSystemPrompt()` em três funções:
+   - `buildTemporalContext()` → bloco de datas (já existe, extrair).
+   - `buildFormattingRules()` → bloco de DIRETRIZES + FORMATAÇÃO + anti-vazamento (já existe, extrair).
+   - `DEFAULT_PERSONA` → constante com a persona "Especialista em BI/ERP integrado ao Bling…".
 
-### C. `src/routes/_authenticated/agent.tsx` — limpeza defensiva
+b) Nova `buildSystemPrompt(customPersona?: string | null)`:
+   ```
+   return [
+     buildTemporalContext(),
+     (customPersona?.trim() || DEFAULT_PERSONA),
+     buildFormattingRules(),
+   ].join("\n\n");
+   ```
 
-1. Reescrever `cleanAssistant` espelhando `sanitizeAssistant + normalizeMarkdown` do backend (mesma lógica), para limpar:
-   - Mensagens antigas do histórico já contaminadas.
-   - Qualquer caso que escape do servidor.
+c) Em `chatWithAgent.handler`, ler `agent_system_prompt` do `tenant_settings` (mesma query do `minimax_api_key`) e passar para `buildSystemPrompt`.
 
-2. Manter `remarkGfm` e classes prose como já estão.
+### 3. Admin functions — `src/lib/admin.functions.ts`
 
-### D. (Opcional, baixo risco) Limpeza retroativa do histórico
+a) `getTenantSettings`: incluir `agent_system_prompt` no fallback retornado.
 
-Não migrar dados — apenas confiar no `cleanAssistant` do frontend para sanear mensagens legadas em runtime. Sem migração SQL.
+b) `upsertTenantSettings`: adicionar `agent_system_prompt: z.string().nullable().optional()` e gravar `null` quando vazio (assim ativa o fallback).
+
+### 4. UI — `src/routes/_authenticated/_admin/admin.clients.tsx`
+
+No `TenantSettingsForm`, abaixo do bloco "Minimax (Agente IA)":
+
+- Novo bloco **"Configurações da IA"** com:
+  - `<textarea>` (rows=12, monospace, max-h scroll) ligado a `form.agent_system_prompt`.
+  - Placeholder: "Vazio = usa o prompt padrão do sistema (Especialista em BI/ERP). Você pode escrever instruções específicas: persona, tom, regras de negócio do cliente, etc."
+  - Subtexto: "O contexto temporal (datas) e as regras de formatação Markdown são adicionados automaticamente — você só edita a persona/instruções de negócio."
+  - Linha de botões secundários:
+    - **"Carregar Padrão"** → preenche textarea com `DEFAULT_PERSONA` (exposto via constante exportada de `agent.functions.ts` ou duplicada no admin).
+    - **"Restaurar Padrão"** → seta string vazia (gravará NULL → fallback).
+
+### 5. Verificação
+
+- Editar prompt → salvar → abrir chat do tenant → resposta reflete a persona nova (ex.: tom diferente).
+- Limpar campo → salvar → comportamento volta ao padrão.
+- Em ambos os casos: tabelas continuam bem formatadas, sem `<think>` vazando, datas corretas.
 
 ---
-
-## Verificação
-
-- "Resuma minhas vendas dos últimos 30 dias" → tabela com 3+ colunas renderiza com linhas separadas, sem `<think>` visível.
-- Mensagens antigas com `<think>` no histórico aparecem limpas após reload (sanitizadas no client).
-- Resposta com `\n` literal vinda do modelo aparece com quebras reais.
 
 ## Fora de escopo
+- Versionamento/histórico de prompts.
+- Variáveis de template no prompt (ex.: `{{nome_cliente}}`).
+- Preview do prompt final concatenado no admin (posso adicionar se quiser, mas não estava pedido).
 
-- Lógica das tools, RLS, sync Bling, autenticação, dashboard.
-- Migração de dados em `ai_messages`.
+---
+
+**Antes de implementar, preciso da sua confirmação:**
+1. Concorda em **separar persona (editável) de regras técnicas (fixas)** em vez de o admin sobrescrever o prompt inteiro?
+2. Concorda com o esquema dos botões "Carregar Padrão" + "Restaurar Padrão"?
