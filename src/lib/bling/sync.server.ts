@@ -63,7 +63,8 @@ async function endRun(id: string, ok: boolean, items: number, errMsg?: string, m
     heartbeat_at: new Date().toISOString(),
   };
   if (meta !== undefined) update.meta = meta as never;
-  await supabaseAdmin.from("bling_sync_runs").update(update).eq("id", id);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await supabaseAdmin.from("bling_sync_runs").update(update as any).eq("id", id);
 }
 
 type BatchResult = { ok: true; count: number; done: boolean; nextPage: number | null; runId: string };
