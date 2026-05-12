@@ -417,20 +417,23 @@ async function runPaginatedBatch(args: {
 
   try {
     for (let i = 0; i < pagesPerBatch; i++) {
+      const tFetch0 = Date.now();
       const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
         tenantId, path,
         { searchParams: { pagina, limite: pageLimit, dataAlteracaoInicial } },
       );
+      const tFetch1 = Date.now();
       const list = resp?.data ?? [];
       if (list.length === 0) {
         await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
-        console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} done=true total=${count}`);
+        console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} fetchMs=${tFetch1 - tFetch0} done=true total=${count}`);
         return { ok: true, count, done: true, nextPage: null, runId };
       }
       const n = await upsert(list);
+      const tUp1 = Date.now();
       count += n;
       await heartbeat(runId, pagina, count);
-      console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} upserted=${n} total=${count}`);
+      console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} fetchMs=${tFetch1 - tFetch0} upsertMs=${tUp1 - tFetch1} items=${n} total=${count}`);
       if (list.length < pageLimit) {
         await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
         return { ok: true, count, done: true, nextPage: null, runId };
@@ -443,7 +446,7 @@ async function runPaginatedBatch(args: {
   } catch (e) {
     const msg = errMessage(e);
     console.error(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} ERROR: ${msg}`);
-    await endRun(runId, false, count, msg, { mode, dataAlteracaoInicial });
+    await endRun(runId, false, count, msg, { mode, dataAlteracaoInicial, failedPage: pagina, failedAfterCount: count });
     throw e;
   }
 }
@@ -478,6 +481,11 @@ function mapOrder(tenantId: string) {
 }
 
 function errMessage(e: unknown) {
-  if (e instanceof BlingError) return `${e.message} :: ${JSON.stringify(e.body).slice(0, 500)}`;
+  if (e instanceof BlingError) {
+    let bodyStr: string;
+    try { bodyStr = typeof e.body === "string" ? e.body : JSON.stringify(e.body); }
+    catch { bodyStr = String(e.body); }
+    return `[${e.status}] ${e.message} :: ${bodyStr.slice(0, 700)}`;
+  }
   return e instanceof Error ? e.message : String(e);
 }
