@@ -2,10 +2,12 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { blingFetch, BlingError } from "./client.server";
 
-type Resource = "deposits" | "products" | "stock" | "orders";
+type Resource = "deposits" | "products" | "stock" | "orders" | "contacts";
 
 // Quantas páginas processamos por execução (batch). Mantém o tick curto e evita timeouts.
 const PAGES_PER_BATCH = 5;
+// Pedidos exigem detail-fetch por item — mais pesado, então menos páginas por tick.
+const ORDERS_PAGES_PER_BATCH = 1;
 
 async function startRun(
   tenantId: string,
