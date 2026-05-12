@@ -47,7 +47,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
           expiresAt: null,
           connectedAt: null,
           lastRefreshAt: null,
-          counts: { products: 0, deposits: 0, stocks: 0, orders: 0 },
+          counts: { products: 0, deposits: 0, stocks: 0, orders: 0, contacts: 0, orderItems: 0 },
           lastRuns: [] as Array<never>,
           noTenant: true as const,
         };
