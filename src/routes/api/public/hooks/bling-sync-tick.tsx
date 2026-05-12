@@ -36,24 +36,28 @@ export const Route = createFileRoute("/api/public/hooks/bling-sync-tick")({
           const tenantId = c.tenant_id as string;
           const tenantOut: Record<string, unknown> = { tenantId };
           try {
-            // 2a) Retoma runs em andamento (orders/products/contacts) se houver.
+            // 2a) Retoma runs em andamento (orders/products/contacts) se houver — isolado por recurso.
             const fnByResource = { orders: syncOrders, products: syncProducts, contacts: syncContacts } as const;
             for (const resource of ["orders", "products", "contacts"] as const) {
-              const { data: pending } = await supabaseAdmin
-                .from("bling_sync_runs")
-                .select("id")
-                .eq("tenant_id", tenantId).eq("resource", resource)
-                .eq("status", "running")
-                .not("next_page", "is", null)
-                .order("started_at", { ascending: false }).limit(1).maybeSingle();
-              const fn = fnByResource[resource];
-              if (pending?.id) {
-                const r = await fn(tenantId, "incremental", { resumeRunId: pending.id });
-                tenantOut[`${resource}_resume`] = { done: r.done, count: r.count, nextPage: r.nextPage };
-                continue;
+              try {
+                const { data: pending } = await supabaseAdmin
+                  .from("bling_sync_runs")
+                  .select("id")
+                  .eq("tenant_id", tenantId).eq("resource", resource)
+                  .eq("status", "running")
+                  .not("next_page", "is", null)
+                  .order("started_at", { ascending: false }).limit(1).maybeSingle();
+                const fn = fnByResource[resource];
+                const r = pending?.id
+                  ? await fn(tenantId, "incremental", { resumeRunId: pending.id })
+                  : await fn(tenantId, "incremental");
+                tenantOut[pending?.id ? `${resource}_resume` : resource] = { done: r.done, count: r.count, nextPage: r.nextPage };
+                console.log(`[bling-sync-tick] tenant=${tenantId} resource=${resource} done=${r.done} count=${r.count} nextPage=${r.nextPage}`);
+              } catch (e) {
+                const msg = errMsg(e);
+                tenantOut[`${resource}_error`] = msg;
+                console.error(`[bling-sync-tick] tenant=${tenantId} resource=${resource} ERROR: ${msg}`);
               }
-              const r = await fn(tenantId, "incremental");
-              tenantOut[resource] = { done: r.done, count: r.count, nextPage: r.nextPage };
             }
             // 2c) Stock incremental (single-shot, baixo volume).
             try {
