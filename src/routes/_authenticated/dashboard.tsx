@@ -94,7 +94,7 @@ function Dashboard() {
         </div>
       )}
 
-      {blingStatusQ.data?.freshness && (
+      {blingStatusQ.data?.connected && blingStatusQ.data?.freshness && (
         <FreshnessBanner data={blingStatusQ.data.freshness} loading={blingStatusQ.isFetching} onRefresh={() => blingStatusQ.refetch()} />
       )}
 
