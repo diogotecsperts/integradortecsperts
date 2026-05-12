@@ -4,6 +4,11 @@ import { syncDeposits, syncProducts, syncStock, syncOrders, syncContacts } from 
 
 // Endpoint público chamado por pg_cron a cada ~20min.
 // Auth: header `apikey` deve bater com a anon key.
+//
+// Estratégia: cada execução processa NO MÁXIMO UM recurso por tenant
+// (de orders/products/contacts). Stock/deposits só rodam se nenhum dos
+// três principais precisou rodar — assim cada tick fica curto e nunca
+// estoura o limite de tempo do Worker.
 export const Route = createFileRoute("/api/public/hooks/bling-sync-tick")({
   server: {
     handlers: {
@@ -32,49 +37,89 @@ export const Route = createFileRoute("/api/public/hooks/bling-sync-tick")({
           return jsonResponse({ ok: false, error: credErr.message }, 500);
         }
 
+        const fnByResource = { orders: syncOrders, products: syncProducts, contacts: syncContacts } as const;
+        const PRIMARY = ["orders", "products", "contacts"] as const;
+        type Primary = typeof PRIMARY[number];
+
         for (const c of creds ?? []) {
           const tenantId = c.tenant_id as string;
           const tenantOut: Record<string, unknown> = { tenantId };
           try {
-            // 2a) Retoma runs em andamento (orders/products/contacts) se houver — isolado por recurso.
-            const fnByResource = { orders: syncOrders, products: syncProducts, contacts: syncContacts } as const;
-            for (const resource of ["orders", "products", "contacts"] as const) {
+            // 2a) Há run "running" pausada (resume) em qualquer recurso primário?
+            const { data: pending } = await supabaseAdmin
+              .from("bling_sync_runs")
+              .select("id, resource")
+              .eq("tenant_id", tenantId)
+              .in("resource", PRIMARY as unknown as string[])
+              .eq("status", "running")
+              .not("next_page", "is", null)
+              .order("started_at", { ascending: true })
+              .limit(1)
+              .maybeSingle();
+
+            let pickedPrimary: Primary | null = null;
+
+            if (pending?.id && (PRIMARY as readonly string[]).includes(pending.resource)) {
+              const resource = pending.resource as Primary;
               try {
-                const { data: pending } = await supabaseAdmin
-                  .from("bling_sync_runs")
-                  .select("id")
-                  .eq("tenant_id", tenantId).eq("resource", resource)
-                  .eq("status", "running")
-                  .not("next_page", "is", null)
-                  .order("started_at", { ascending: false }).limit(1).maybeSingle();
-                const fn = fnByResource[resource];
-                const r = pending?.id
-                  ? await fn(tenantId, "incremental", { resumeRunId: pending.id })
-                  : await fn(tenantId, "incremental");
-                tenantOut[pending?.id ? `${resource}_resume` : resource] = { done: r.done, count: r.count, nextPage: r.nextPage };
+                const r = await fnByResource[resource](tenantId, "incremental", { resumeRunId: pending.id });
+                tenantOut[`${resource}_resume`] = { done: r.done, count: r.count, nextPage: r.nextPage };
+                console.log(`[bling-sync-tick] tenant=${tenantId} resource=${resource} resume done=${r.done} count=${r.count} nextPage=${r.nextPage}`);
+              } catch (e) {
+                tenantOut[`${resource}_error`] = errMsg(e);
+                console.error(`[bling-sync-tick] tenant=${tenantId} resource=${resource} resume ERROR: ${errMsg(e)}`);
+              }
+              pickedPrimary = resource;
+            } else {
+              // 2b) Sem resume — escolhe o recurso mais defasado (menor last ok finished_at; nulls primeiro).
+              const { data: lastOks } = await supabaseAdmin
+                .from("bling_sync_runs")
+                .select("resource, finished_at, status")
+                .eq("tenant_id", tenantId)
+                .in("resource", PRIMARY as unknown as string[])
+                .eq("status", "ok")
+                .order("finished_at", { ascending: false });
+
+              const latestByRes = new Map<string, string | null>();
+              for (const r of lastOks ?? []) {
+                if (!latestByRes.has(r.resource)) latestByRes.set(r.resource, r.finished_at ?? null);
+              }
+              // Ordena: nunca rodou (null) primeiro, depois mais antigo.
+              const ranked = [...PRIMARY].sort((a, b) => {
+                const av = latestByRes.get(a);
+                const bv = latestByRes.get(b);
+                if (!av && !bv) return 0;
+                if (!av) return -1;
+                if (!bv) return 1;
+                return new Date(av).getTime() - new Date(bv).getTime();
+              });
+              const resource = ranked[0];
+              try {
+                const r = await fnByResource[resource](tenantId, "incremental");
+                tenantOut[resource] = { done: r.done, count: r.count, nextPage: r.nextPage };
                 console.log(`[bling-sync-tick] tenant=${tenantId} resource=${resource} done=${r.done} count=${r.count} nextPage=${r.nextPage}`);
               } catch (e) {
-                const msg = errMsg(e);
-                tenantOut[`${resource}_error`] = msg;
-                console.error(`[bling-sync-tick] tenant=${tenantId} resource=${resource} ERROR: ${msg}`);
+                tenantOut[`${resource}_error`] = errMsg(e);
+                console.error(`[bling-sync-tick] tenant=${tenantId} resource=${resource} ERROR: ${errMsg(e)}`);
               }
+              pickedPrimary = resource;
             }
-            // 2c) Stock incremental (single-shot, baixo volume).
-            try {
-              const r = await syncStock(tenantId);
-              tenantOut.stock = r;
-            } catch (e) { tenantOut.stock_error = errMsg(e); }
 
-            // 2d) Depósitos: 1x/dia (heurística leve — checa se tem run "ok" nas últimas 24h).
-            const { data: lastDep } = await supabaseAdmin
-              .from("bling_sync_runs")
-              .select("finished_at")
-              .eq("tenant_id", tenantId).eq("resource", "deposits").eq("status", "ok")
-              .order("finished_at", { ascending: false }).limit(1).maybeSingle();
-            const stale = !lastDep?.finished_at || (Date.now() - new Date(lastDep.finished_at).getTime() > 24 * 3600 * 1000);
-            if (stale) {
-              try { tenantOut.deposits = await syncDeposits(tenantId); }
-              catch (e) { tenantOut.deposits_error = errMsg(e); }
+            // 2c) Stock/depósitos só rodam se NÃO usamos o slot principal (improvável).
+            if (!pickedPrimary) {
+              try { tenantOut.stock = await syncStock(tenantId); }
+              catch (e) { tenantOut.stock_error = errMsg(e); }
+
+              const { data: lastDep } = await supabaseAdmin
+                .from("bling_sync_runs")
+                .select("finished_at")
+                .eq("tenant_id", tenantId).eq("resource", "deposits").eq("status", "ok")
+                .order("finished_at", { ascending: false }).limit(1).maybeSingle();
+              const stale = !lastDep?.finished_at || (Date.now() - new Date(lastDep.finished_at).getTime() > 24 * 3600 * 1000);
+              if (stale) {
+                try { tenantOut.deposits = await syncDeposits(tenantId); }
+                catch (e) { tenantOut.deposits_error = errMsg(e); }
+              }
             }
           } catch (e) {
             tenantOut.error = errMsg(e);
