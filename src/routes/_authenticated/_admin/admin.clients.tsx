@@ -537,6 +537,35 @@ function SyncBtn({ label, onClick, loading, disabled }: { label: string; onClick
   );
 }
 
+type RunRow = {
+  id: string;
+  resource: string;
+  status: string;
+  next_page: number | null;
+  heartbeat_at: string | null;
+  started_at: string;
+};
+
+function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
+  const running = lastRuns.find((r) => r.status === "running" && r.next_page != null);
+  const [, force] = React.useReducer((x: number) => x + 1, 0);
+  React.useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => force(), 5000);
+    return () => clearInterval(t);
+  }, [running]);
+  if (!running) return null;
+  const ref = running.heartbeat_at ?? running.started_at;
+  const ageSec = Math.max(0, Math.floor((Date.now() - new Date(ref).getTime()) / 1000));
+  const stale = ageSec > 60;
+  return (
+    <div className={`rounded-md border px-2 py-1.5 text-[11px] ${stale ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-amber-500/30 bg-amber-500/5 text-amber-300"}`}>
+      ⚠ Sync em andamento ({RES_LABEL[running.resource] ?? running.resource}, página {running.next_page}). Não feche esta aba.
+      <div className="mt-0.5 opacity-80">Último heartbeat: {ageSec}s atrás{stale ? " — possivelmente travado" : ""}.</div>
+    </div>
+  );
+}
+
 function SecretInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   const [show, setShow] = React.useState(false);
   return (
