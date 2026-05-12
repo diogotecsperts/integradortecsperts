@@ -110,46 +110,26 @@ export async function syncDeposits(tenantId: string) {
 }
 
 // ===================== PRODUTOS =====================
-export async function syncProducts(tenantId: string, mode: "full" | "incremental" = "full") {
-  const runId = await startRun(tenantId, "products", mode);
-  let count = 0;
-  let dataAlteracaoInicial: string | undefined;
-  if (mode === "incremental") {
-    const { data } = await supabaseAdmin
-      .from("bling_sync_runs")
-      .select("finished_at")
-      .eq("tenant_id", tenantId).eq("resource", "products").eq("status", "ok")
-      .order("finished_at", { ascending: false }).limit(1).maybeSingle();
-    if (data?.finished_at) {
-      const d = new Date(data.finished_at);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      dataAlteracaoInicial = `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-    }
-  }
-  try {
-    let pagina = 1;
-    for (;;) {
-      const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
-        tenantId, "/produtos",
-        { searchParams: { pagina, limite: 100, dataAlteracaoInicial } },
-      );
-      const list = resp?.data ?? [];
-      if (list.length === 0) break;
+export async function syncProducts(
+  tenantId: string,
+  mode: "full" | "incremental" = "full",
+  opts?: { resumeRunId?: string },
+): Promise<BatchResult> {
+  return runPaginatedBatch({
+    tenantId,
+    resource: "products",
+    mode,
+    resumeRunId: opts?.resumeRunId,
+    path: "/produtos",
+    upsert: async (list) => {
       const rows = list.map(mapProduct(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_products")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
-      count += rows.length;
-      if (list.length < 100) break;
-      pagina++;
-    }
-    await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
-    return { ok: true, count };
-  } catch (e) {
-    await endRun(runId, false, count, errMessage(e), { mode, dataAlteracaoInicial });
-    throw e;
-  }
+      return rows.length;
+    },
+  });
 }
 
 function mapProduct(tenantId: string) {
