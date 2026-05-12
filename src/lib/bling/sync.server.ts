@@ -384,10 +384,12 @@ async function runPaginatedBatch(args: {
   resumeRunId?: string;
   path: string;
   pagesPerBatch?: number;
+  pageLimit?: number;
   upsert: (list: Array<Record<string, unknown>>) => Promise<number>;
 }): Promise<BatchResult> {
   const { tenantId, resource, mode, path, upsert } = args;
   const pagesPerBatch = args.pagesPerBatch ?? PAGES_PER_BATCH;
+  const pageLimit = args.pageLimit ?? 100;
   let runId: string;
   let pagina: number;
   let count = 0;
@@ -417,17 +419,19 @@ async function runPaginatedBatch(args: {
     for (let i = 0; i < pagesPerBatch; i++) {
       const resp = await blingFetch<{ data: Array<Record<string, unknown>> }>(
         tenantId, path,
-        { searchParams: { pagina, limite: 100, dataAlteracaoInicial } },
+        { searchParams: { pagina, limite: pageLimit, dataAlteracaoInicial } },
       );
       const list = resp?.data ?? [];
       if (list.length === 0) {
         await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
+        console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} done=true total=${count}`);
         return { ok: true, count, done: true, nextPage: null, runId };
       }
       const n = await upsert(list);
       count += n;
       await heartbeat(runId, pagina, count);
-      if (list.length < 100) {
+      console.log(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} upserted=${n} total=${count}`);
+      if (list.length < pageLimit) {
         await endRun(runId, true, count, undefined, { mode, dataAlteracaoInicial });
         return { ok: true, count, done: true, nextPage: null, runId };
       }
@@ -437,7 +441,9 @@ async function runPaginatedBatch(args: {
     await pauseRun(runId, pagina, count);
     return { ok: true, count, done: false, nextPage: pagina, runId };
   } catch (e) {
-    await endRun(runId, false, count, errMessage(e), { mode, dataAlteracaoInicial });
+    const msg = errMessage(e);
+    console.error(`[bling-sync] tenant=${tenantId} resource=${resource} page=${pagina} ERROR: ${msg}`);
+    await endRun(runId, false, count, msg, { mode, dataAlteracaoInicial });
     throw e;
   }
 }
