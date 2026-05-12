@@ -462,6 +462,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
       )}
 
       <div className="grid grid-cols-2 gap-2">
+        <SyncBtn label="Contatos" onClick={() => m.mutate({ resource: "contacts" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Depósitos" onClick={() => m.mutate({ resource: "deposits" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Produtos (full)" onClick={() => m.mutate({ resource: "products", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Produtos (incr.)" onClick={() => m.mutate({ resource: "products", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
