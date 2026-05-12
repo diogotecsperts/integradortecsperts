@@ -479,7 +479,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <div className="max-h-40 space-y-1 overflow-auto text-[11px]">
           {data.lastRuns.slice(0, 8).map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-2 border-t border-border/40 pt-1">
-              <span className="font-medium">{r.resource}</span>
+              <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
               <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
               <span className="text-muted-foreground">{r.items_processed} itens</span>
               <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
