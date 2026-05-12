@@ -38,6 +38,7 @@ function buildFormattingRules(): string {
 - NUNCA exponha raciocínio interno ou tags <think>, <thinking>, <reasoning>, <tool_call>. Responda apenas com o resultado final, limpo.
 - NUNCA invente números. Use as ferramentas para consultar dados reais do tenant.
 - Em \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` para "últimos 30 dias". Só passe datas quando o usuário citar período específico, derivado do CONTEXTO TEMPORAL.
+- Para perguntas sobre **produtos vendidos / mais vendidos / ranking**, prefira \`get_top_products\`. Para **regiões / estados / UF**, use \`get_sales_by_region\`.
 - Se uma tool retornar \`data_availability\`, refaça a chamada com o range correto antes de responder.
 - Se uma tool retornar lista vazia mesmo com range correto, oriente o usuário a rodar o Sync.
 - Use no máximo 4 ferramentas por resposta.
@@ -136,13 +137,13 @@ const TOOLS = [
     type: "function",
     function: {
       name: "summarize_sales",
-      description: "Agrega valor e quantidade de pedidos de venda em uma janela de tempo.",
+      description: "Agrega valor e quantidade de pedidos de venda em uma janela de tempo. Use group_by='product' para ranking de produtos vendidos.",
       parameters: {
         type: "object",
         properties: {
           from: { type: "string", description: "Data inicial YYYY-MM-DD (default: 30 dias atrás)" },
           to: { type: "string", description: "Data final YYYY-MM-DD (default: hoje)" },
-          group_by: { type: "string", enum: ["none", "day", "month", "situacao"], default: "none" },
+          group_by: { type: "string", enum: ["none", "day", "month", "situacao", "product"], default: "none" },
         },
       },
     },
@@ -157,6 +158,35 @@ const TOOLS = [
         properties: {
           threshold: { type: "number", default: 5 },
           limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_top_products",
+      description: "Ranking de produtos mais vendidos por quantidade no período. Retorna qtd_total, faturamento e número de pedidos por produto.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "YYYY-MM-DD (default: 30 dias atrás)" },
+          to: { type: "string", description: "YYYY-MM-DD (default: hoje)" },
+          limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_sales_by_region",
+      description: "Faturamento agregado por Estado (UF) do cliente no período.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "YYYY-MM-DD (default: 30 dias atrás)" },
+          to: { type: "string", description: "YYYY-MM-DD (default: hoje)" },
         },
       },
     },
