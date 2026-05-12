@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { BLING_OAUTH_AUTHORIZE, getCredentialStatus } from "@/lib/bling/client.server";
-import { syncDeposits, syncProducts, syncStock, syncOrders } from "@/lib/bling/sync.server";
+import { syncDeposits, syncProducts, syncStock, syncOrders, syncContacts } from "@/lib/bling/sync.server";
 
 async function getProfile(userId: string) {
   const { data } = await supabaseAdmin
@@ -47,7 +47,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
           expiresAt: null,
           connectedAt: null,
           lastRefreshAt: null,
-          counts: { products: 0, deposits: 0, stocks: 0, orders: 0 },
+          counts: { products: 0, deposits: 0, stocks: 0, orders: 0, contacts: 0, orderItems: 0 },
           lastRuns: [] as Array<never>,
           noTenant: true as const,
         };
@@ -62,11 +62,13 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       .select("bling_client_id, bling_client_secret")
       .eq("tenant_id", tenantId).maybeSingle();
 
-    const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }, { count: nOrders }] = await Promise.all([
+    const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }, { count: nOrders }, { count: nContacts }, { count: nOrderItems }] = await Promise.all([
       supabaseAdmin.from("bling_products").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_deposits").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_stock_balances").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
       supabaseAdmin.from("bling_orders").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_contacts").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_order_items").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
     ]);
     const { data: lastRuns } = await supabaseAdmin
       .from("bling_sync_runs")
@@ -75,7 +77,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       .order("started_at", { ascending: false })
       .limit(20);
 
-    const resources: Array<"orders" | "products" | "stock" | "deposits"> = ["orders", "products", "stock", "deposits"];
+    const resources: Array<"orders" | "products" | "stock" | "deposits" | "contacts"> = ["orders", "products", "stock", "deposits", "contacts"];
     const freshness = resources.map((res) => {
       const lastOk = (lastRuns ?? []).find((r) => r.resource === res && r.status === "ok");
       const lastAny = (lastRuns ?? []).find((r) => r.resource === res);
@@ -98,7 +100,7 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       expiresAt: cred?.expires_at ?? null,
       connectedAt: cred?.connected_at ?? null,
       lastRefreshAt: cred?.last_refresh_at ?? null,
-      counts: { products: nProducts ?? 0, deposits: nDeposits ?? 0, stocks: nStocks ?? 0, orders: nOrders ?? 0 },
+      counts: { products: nProducts ?? 0, deposits: nDeposits ?? 0, stocks: nStocks ?? 0, orders: nOrders ?? 0, contacts: nContacts ?? 0, orderItems: nOrderItems ?? 0 },
       lastRuns: lastRuns ?? [],
       freshness,
     };
@@ -169,7 +171,7 @@ export const runBlingSync = createServerFn({ method: "POST" })
   .inputValidator((d) =>
     z.object({
       tenantId: z.string().uuid(),
-      resource: z.enum(["deposits", "products", "stock", "orders", "all"]),
+      resource: z.enum(["deposits", "products", "stock", "orders", "contacts", "all"]),
       mode: z.enum(["full", "incremental"]).default("full"),
       untilDone: z.boolean().default(false),
       maxBatches: z.number().int().min(1).max(20).default(6),
@@ -190,6 +192,9 @@ export const runBlingSync = createServerFn({ method: "POST" })
       }
       if (data.resource === "orders" || data.resource === "all") {
         out.orders = await runUntil(syncOrders, data.tenantId, data.mode, data.untilDone, data.maxBatches);
+      }
+      if (data.resource === "contacts" || data.resource === "all") {
+        out.contacts = await runUntil(syncContacts, data.tenantId, data.mode, data.untilDone, data.maxBatches);
       }
       return { ok: true, ...out };
     } catch (e) {

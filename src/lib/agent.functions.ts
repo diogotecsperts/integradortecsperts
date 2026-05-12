@@ -38,6 +38,7 @@ function buildFormattingRules(): string {
 - NUNCA exponha raciocínio interno ou tags <think>, <thinking>, <reasoning>, <tool_call>. Responda apenas com o resultado final, limpo.
 - NUNCA invente números. Use as ferramentas para consultar dados reais do tenant.
 - Em \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` para "últimos 30 dias". Só passe datas quando o usuário citar período específico, derivado do CONTEXTO TEMPORAL.
+- Para perguntas sobre **produtos vendidos / mais vendidos / ranking**, prefira \`get_top_products\`. Para **regiões / estados / UF**, use \`get_sales_by_region\`.
 - Se uma tool retornar \`data_availability\`, refaça a chamada com o range correto antes de responder.
 - Se uma tool retornar lista vazia mesmo com range correto, oriente o usuário a rodar o Sync.
 - Use no máximo 4 ferramentas por resposta.
@@ -136,13 +137,13 @@ const TOOLS = [
     type: "function",
     function: {
       name: "summarize_sales",
-      description: "Agrega valor e quantidade de pedidos de venda em uma janela de tempo.",
+      description: "Agrega valor e quantidade de pedidos de venda em uma janela de tempo. Use group_by='product' para ranking de produtos vendidos.",
       parameters: {
         type: "object",
         properties: {
           from: { type: "string", description: "Data inicial YYYY-MM-DD (default: 30 dias atrás)" },
           to: { type: "string", description: "Data final YYYY-MM-DD (default: hoje)" },
-          group_by: { type: "string", enum: ["none", "day", "month", "situacao"], default: "none" },
+          group_by: { type: "string", enum: ["none", "day", "month", "situacao", "product"], default: "none" },
         },
       },
     },
@@ -157,6 +158,35 @@ const TOOLS = [
         properties: {
           threshold: { type: "number", default: 5 },
           limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_top_products",
+      description: "Ranking de produtos mais vendidos por quantidade no período. Retorna qtd_total, faturamento e número de pedidos por produto.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "YYYY-MM-DD (default: 30 dias atrás)" },
+          to: { type: "string", description: "YYYY-MM-DD (default: hoje)" },
+          limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_sales_by_region",
+      description: "Faturamento agregado por Estado (UF) do cliente no período.",
+      parameters: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "YYYY-MM-DD (default: 30 dias atrás)" },
+          to: { type: "string", description: "YYYY-MM-DD (default: hoje)" },
         },
       },
     },
@@ -208,7 +238,7 @@ async function execTool(name: string, args: Record<string, unknown>, tenantId: s
       const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
       const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
       const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
-      const groupBy = ((args.group_by as string) ?? "none") as "none" | "day" | "month" | "situacao";
+      const groupBy = ((args.group_by as string) ?? "none") as "none" | "day" | "month" | "situacao" | "product";
 
       const { data: agg, error: aggErr } = await supabaseAdmin.rpc("agent_summarize_sales", {
         _tenant_id: tenantId, _from: from, _to: to, _group_by: groupBy,
@@ -265,6 +295,47 @@ async function execTool(name: string, args: Record<string, unknown>, tenantId: s
           saldo_total: Number(r.saldo_total),
           codigo: r.codigo,
           nome: r.nome,
+        })),
+      };
+    }
+    case "get_top_products": {
+      const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
+      const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
+      const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
+      const limit = Math.min(Number(args.limit ?? 10), 50);
+      const { data, error } = await supabaseAdmin.rpc("agent_top_products", {
+        _tenant_id: tenantId, _from: from, _to: to, _limit: limit,
+      });
+      if (error) return { error: error.message };
+      const rows = (data ?? []) as Array<{ produto_id: number; codigo: string | null; nome: string | null; qtd_total: number | string; faturamento: number | string; pedidos_count: number | string }>;
+      return {
+        from, to,
+        results: rows.map((r) => ({
+          produto_id: r.produto_id,
+          codigo: r.codigo,
+          nome: r.nome,
+          qtd_total: Number(r.qtd_total),
+          faturamento: Number(r.faturamento),
+          pedidos_count: Number(r.pedidos_count),
+        })),
+      };
+    }
+    case "get_sales_by_region": {
+      const to = (args.to as string) ?? new Date().toISOString().slice(0, 10);
+      const fromDefault = new Date(); fromDefault.setDate(fromDefault.getDate() - 30);
+      const from = (args.from as string) ?? fromDefault.toISOString().slice(0, 10);
+      const { data, error } = await supabaseAdmin.rpc("agent_sales_by_region", {
+        _tenant_id: tenantId, _from: from, _to: to,
+      });
+      if (error) return { error: error.message };
+      const rows = (data ?? []) as Array<{ uf: string; total: number | string; cnt: number | string; customers: number | string }>;
+      return {
+        from, to,
+        regions: rows.map((r) => ({
+          uf: r.uf,
+          total: Number(r.total),
+          cnt: Number(r.cnt),
+          customers: Number(r.customers),
         })),
       };
     }

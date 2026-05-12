@@ -244,7 +244,7 @@ function ClientView() {
   );
 }
 
-const RES_LABEL: Record<string, string> = { orders: "Pedidos", products: "Produtos", stock: "Estoque", deposits: "Depósitos" };
+const RES_LABEL: Record<string, string> = { orders: "Pedidos", products: "Produtos", stock: "Estoque", deposits: "Depósitos", contacts: "Contatos" };
 
 function Stat({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: number }) {
   return (
