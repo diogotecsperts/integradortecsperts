@@ -9,7 +9,10 @@ import { resolveActiveTenantId } from "@/lib/tenant-resolve.server";
 const MINIMAX_URL = "https://api.minimax.io/v1/chat/completions";
 const MODEL = "MiniMax-M2.7";
 
-function buildSystemPrompt(): string {
+// Persona padrão (fallback) — editável pelo superadmin via tenant_settings.agent_system_prompt.
+export const DEFAULT_AGENT_PERSONA = `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts. Responda SEMPRE em PT-BR, de forma objetiva, profissional e consultiva.`;
+
+function buildTemporalContext(): string {
   const fmt = (d: Date) =>
     new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" })
       .format(d);
@@ -20,22 +23,21 @@ function buildSystemPrompt(): string {
     timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "long", year: "numeric",
   }).format(now);
   const [yyyy, mm] = today.split("-");
-  return `Você é um Especialista em BI e ERP integrado ao Bling, atuando dentro do sistema Tecsperts.
-
-CONTEXTO TEMPORAL (autoritativo, sobrepõe seu conhecimento interno):
+  return `CONTEXTO TEMPORAL (autoritativo, sobrepõe seu conhecimento interno):
 - Data atual: ${today} (${human})
 - Hoje - 7 dias: ${minus(7)}
 - Hoje - 30 dias: ${minus(30)}
 - Hoje - 90 dias: ${minus(90)}
 - Início do mês atual: ${yyyy}-${mm}-01
 - Início do ano atual: ${yyyy}-01-01
-Use SEMPRE essas datas como referência. NUNCA assuma outro ano. Se o usuário disser "hoje", "este mês", "este ano" ou "últimos N dias", calcule a partir das datas acima.
+Use SEMPRE essas datas como referência. NUNCA assuma outro ano. Se o usuário disser "hoje", "este mês", "este ano" ou "últimos N dias", calcule a partir das datas acima.`;
+}
 
-DIRETRIZES:
-- Responda SEMPRE em PT-BR, objetivo e profissional.
+function buildFormattingRules(): string {
+  return `DIRETRIZES DE FERRAMENTAS E FORMATAÇÃO (obrigatórias):
 - NUNCA exponha raciocínio interno ou tags <think>, <thinking>, <reasoning>, <tool_call>. Responda apenas com o resultado final, limpo.
 - NUNCA invente números. Use as ferramentas para consultar dados reais do tenant.
-- Em \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` para "últimos 30 dias". Só passe datas quando o usuário citar período específico, derivado do CONTEXTO TEMPORAL acima.
+- Em \`summarize_sales\`, prefira OMITIR \`from\`/\`to\` para "últimos 30 dias". Só passe datas quando o usuário citar período específico, derivado do CONTEXTO TEMPORAL.
 - Se uma tool retornar \`data_availability\`, refaça a chamada com o range correto antes de responder.
 - Se uma tool retornar lista vazia mesmo com range correto, oriente o usuário a rodar o Sync.
 - Use no máximo 4 ferramentas por resposta.
@@ -54,6 +56,11 @@ FORMATAÇÃO DE RESPOSTA (siga EXATAMENTE):
 
 - NUNCA escreva "\\n" como texto literal — use quebras reais.
 - NUNCA use tabela para 2 colunas — prefira bullets.`;
+}
+
+function buildSystemPrompt(customPersona?: string | null): string {
+  const persona = (customPersona ?? "").trim() || DEFAULT_AGENT_PERSONA;
+  return [buildTemporalContext(), persona, buildFormattingRules()].join("\n\n");
 }
 
 // Remove raciocínio interno e artefatos do MiniMax antes de exibir/persistir.
