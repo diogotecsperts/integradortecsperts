@@ -393,7 +393,7 @@ export const chatWithAgent = createServerFn({ method: "POST" })
         }
         continue;
       }
-      finalText = stripThinkTags(message.content ?? "");
+      finalText = cleanReply(message.content ?? "");
       break;
     }
     if (!finalText) finalText = "Não consegui completar a resposta. Tente reformular a pergunta.";
