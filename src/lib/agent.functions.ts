@@ -371,7 +371,7 @@ export const chatWithAgent = createServerFn({ method: "POST" })
       .order("created_at", { ascending: true })
       .limit(40);
     const messages: ChatMessage[] = [
-      { role: "system", content: buildSystemPrompt(customPersona) },
+      { role: "system", content: buildSystemPrompt(resolvedPersona) },
       ...((history ?? []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))),
       { role: "user", content: data.message },
     ];
