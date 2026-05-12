@@ -1,49 +1,51 @@
 ## Objetivo
 
-Eliminar timeouts nas tools de BI do agente movendo a agregação para o Postgres via RPCs `SECURITY DEFINER`, evitando trazer milhares de linhas para o runtime do servidor.
+Transformar `/agent` em interface multi-conversas estilo ChatGPT (sidebar + histórico) com motor de BI já otimizado via RPCs no Postgres. As RPCs (`agent_summarize_sales`, `agent_sales_availability`, `agent_low_stock`) e a refatoração de `agent.functions.ts` para usá-las **já foram implementadas em turno anterior** — esta entrega foca na interface multi-conversas e nas server functions de gerenciamento.
 
-## Mudanças
+## Backend — `src/lib/agent.functions.ts`
 
-### 1. Migration — novas RPCs agregadas
+Adicionar 3 server functions novas (todas com `requireSupabaseAuth` e escopo por tenant ativo via `resolveActiveTenantId`):
 
-Criar funções no schema `public`, todas com `SECURITY DEFINER`, `SET search_path = public`, recebendo `_tenant_id uuid` como primeiro argumento (chamadas via `supabaseAdmin`, então o filtro por tenant é explícito):
+- **`listConversations({ tenantId? })`** → `{ id, title, updated_at }[]` de `ai_conversations` filtrando `tenant_id` resolvido + `user_id = context.userId`, ordenado `updated_at DESC`, `limit 100`.
+- **`getConversationMessages({ conversationId })`** → valida ownership (tenant + user) e retorna `ai_messages` (`id, role, content, created_at`) ordenado `created_at ASC`.
+- **`deleteConversation({ conversationId })`** → valida ownership, apaga `ai_messages` da conversa e em seguida o registro em `ai_conversations` (cascata manual via `supabaseAdmin`). RLS já permite `DELETE` ao dono.
 
-- **`agent_summarize_sales(_tenant_id, _from date, _to date, _group_by text)`**
-  - Retorna `TABLE(group_key text, total numeric, count bigint, customers bigint)`.
-  - `_group_by` aceita `'none' | 'day' | 'month' | 'situacao'`.
-  - Usa `SUM(valor_total)`, `COUNT(*)`, `COUNT(DISTINCT cliente_id)` agrupado conforme parâmetro (ou sem `GROUP BY` quando `none`, devolvendo 1 linha com `group_key = NULL`).
-  - Filtra `tenant_id = _tenant_id AND data BETWEEN _from AND _to`.
+Ajustar **`chatWithAgent`** para fazer `update ai_conversations set updated_at = now() where id = convId` no fim (mantém a lista ordenada por atividade). O título automático já é gerado no insert (`data.message.slice(0, 60)`) — atende ao requisito.
 
-- **`agent_sales_availability(_tenant_id)`**
-  - Retorna `TABLE(earliest date, latest date, total_orders bigint)`.
-  - Usado apenas quando o resultado principal vier vazio (preserva o `data_availability` atual).
+## Frontend — `src/routes/_authenticated/agent.tsx`
 
-- **`agent_low_stock(_tenant_id, _threshold numeric, _limit int)`**
-  - Retorna `TABLE(produto_id bigint, saldo_total numeric, codigo text, nome text)`.
-  - `SELECT produto_id, SUM(saldo_fisico) ... FROM bling_stock_balances WHERE tenant_id = _tenant_id GROUP BY produto_id HAVING SUM(saldo_fisico) <= _threshold ORDER BY saldo_total ASC LIMIT _limit`, com `LEFT JOIN bling_products` para enriquecer `codigo`/`nome` em uma única query.
+Layout em 2 colunas:
 
-Índices a verificar/criar se ausentes (apenas se não existirem):
-- `bling_orders (tenant_id, data)`
-- `bling_stock_balances (tenant_id, produto_id)`
+```
+[ Sidebar 280px (md+) ] [ Chat flex-1 ]
+```
 
-### 2. `src/lib/agent.functions.ts` — refator das tools
+### Sidebar (`ConversationsSidebar`, componente inline no mesmo arquivo)
+- Cabeçalho com botão **`+ Nova Conversa`**: limpa `conversationId` + `messages`, foca o input. Não cria registro no banco — `chatWithAgent` cria a conversa ao receber a 1ª mensagem (comportamento já existente).
+- `useQuery(["conversations", tenantId], listConversations)` renderiza a lista. Cada item exibe título truncado + data relativa via `formatRelative` (já existe em `@/lib/utils`).
+- Item ativo destacado (`bg-primary/15`).
+- Hover revela ícone `Trash2` → `AlertDialog` confirma → `deleteConversation` → `invalidate(["conversations"])`. Se a conversa ativa foi excluída, limpar estado local.
+- Click em item → `setConversationId(id)` dispara `useQuery(["conv-messages", id], getConversationMessages)` que hidrata `messages` mapeando para o tipo `Msg` local.
+- Em `< md`: sidebar vira `Sheet` (drawer) acionado por botão hamburger no header do chat. Visível inline em `md+`.
 
-- **`summarize_sales`**: substituir o `select("data, valor_total, ...").limit(10000)` por `supabaseAdmin.rpc("agent_summarize_sales", { _tenant_id, _from, _to, _group_by })`. Construir o resultado final (`total`, `count`, `customers`, `ticket_medio`, `groups`) a partir das linhas agregadas. Se vier vazio, chamar `agent_sales_availability` para o bloco `data_availability` + `hint` (mantém comportamento atual).
-- **`low_stock_alerts`**: substituir o download de saldos + map em JS por uma única chamada `supabaseAdmin.rpc("agent_low_stock", { _tenant_id, _threshold, _limit })`. Remover o segundo `select` em `bling_products` (join feito no SQL).
-- **`search_products`**: manter (já tem `limit ≤ 20`), apenas garantir `.select` enxuto (sem `*`).
-- **`get_stock_for_product`**: manter (filtra por `produto_id`, volume limitado por produto). Trocar `select("*")` implícitos? Já usa colunas específicas — sem mudanças.
+### Chat (direita)
+- Após `chatWithAgent` resolver: `setConversationId(r.conversationId)` (já existe) + `queryClient.invalidateQueries({ queryKey: ["conversations"] })` para a sidebar mostrar o título imediatamente.
+- Trocar tenant continua resetando conversa ativa; a key da query refaz a lista.
+- Mantém: sugestões na tela vazia, `ThinkingBubble`, render de markdown, sanitização.
 
-### 3. Diretrizes preservadas
+### Hidratação
+Ao carregar mensagens do servidor, mapear para `Msg = { id, role, content }` (descartar `created_at` no estado de UI).
 
-- Nenhuma mudança em prompts, fluxo de tool-calling, persona ou UI.
-- Todas as queries continuam escopadas por `tenant_id`.
-- Nenhuma tool pode mais fazer `select` sem agregação em `bling_orders` ou `bling_stock_balances`.
+## Sem mudanças
+
+- Sem migration nova (RLS de `ai_conversations`/`ai_messages` já cobre; `ai_conv_tenant_delete` permite apagar a própria conversa; RPCs de BI já existem).
+- Sem alteração em persona, sync Bling, outras rotas.
 
 ## Arquivos
 
-- **Migration nova**: `agent_summarize_sales`, `agent_sales_availability`, `agent_low_stock` (+ índices condicionais).
-- **Editado**: `src/lib/agent.functions.ts` (apenas os dois handlers).
+- **Editado**: `src/lib/agent.functions.ts` (3 server functions novas + bump de `updated_at` em `chatWithAgent`).
+- **Editado**: `src/routes/_authenticated/agent.tsx` (layout 2 colunas + sidebar inline + hidratação por `conversationId` + invalidação de cache).
 
 ## Fora de escopo
 
-Sync do Bling, UI do admin, persona/IA, novos recursos.
+Streaming de respostas, busca dentro do histórico, renomear conversa manualmente, paginação além de 100, compartilhamento de conversas.

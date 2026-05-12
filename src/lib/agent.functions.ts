@@ -393,6 +393,66 @@ export const chatWithAgent = createServerFn({ method: "POST" })
     await supabaseAdmin.from("ai_messages").insert({
       conversation_id: convId, tenant_id: tenantId, role: "assistant", content: finalText,
     });
+    await supabaseAdmin.from("ai_conversations").update({ updated_at: new Date().toISOString() }).eq("id", convId);
 
     return { conversationId: convId, reply: finalText };
   });
+
+export const listConversations = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ tenantId: z.string().uuid().optional() }).parse(d ?? {}))
+  .handler(async ({ data, context }) => {
+    const tenantId = await resolveActiveTenantId(context.userId, data?.tenantId);
+    if (!tenantId) return { conversations: [] };
+    const { data: rows, error } = await supabaseAdmin
+      .from("ai_conversations")
+      .select("id, title, updated_at")
+      .eq("tenant_id", tenantId)
+      .eq("user_id", context.userId)
+      .order("updated_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Response(error.message, { status: 500 });
+    return { conversations: rows ?? [] };
+  });
+
+export const getConversationMessages = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ conversationId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: conv, error: convErr } = await supabaseAdmin
+      .from("ai_conversations")
+      .select("id, tenant_id, user_id")
+      .eq("id", data.conversationId)
+      .maybeSingle();
+    if (convErr) throw new Response(convErr.message, { status: 500 });
+    if (!conv || conv.user_id !== context.userId) {
+      throw new Response("Conversa não encontrada.", { status: 404 });
+    }
+    const { data: rows, error } = await supabaseAdmin
+      .from("ai_messages")
+      .select("id, role, content, created_at")
+      .eq("conversation_id", data.conversationId)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    if (error) throw new Response(error.message, { status: 500 });
+    return { messages: rows ?? [] };
+  });
+
+export const deleteConversation = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ conversationId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: conv } = await supabaseAdmin
+      .from("ai_conversations")
+      .select("id, user_id")
+      .eq("id", data.conversationId)
+      .maybeSingle();
+    if (!conv || conv.user_id !== context.userId) {
+      throw new Response("Conversa não encontrada.", { status: 404 });
+    }
+    await supabaseAdmin.from("ai_messages").delete().eq("conversation_id", data.conversationId);
+    const { error } = await supabaseAdmin.from("ai_conversations").delete().eq("id", data.conversationId);
+    if (error) throw new Response(error.message, { status: 500 });
+    return { ok: true };
+  });
+
