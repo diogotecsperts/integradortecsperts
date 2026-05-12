@@ -381,7 +381,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
     refetchInterval: 10000,
   });
   const m = useMutation({
-    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "all"; mode?: "full" | "incremental" }) =>
+    mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "contacts" | "all"; mode?: "full" | "incremental" }) =>
       sync({ data: { tenantId, resource: v.resource, mode: v.mode ?? "full", untilDone: (v.mode ?? "full") === "full", maxBatches: 12 } }),
     onSuccess: (res) => {
       const orders = (res as { orders?: { completed?: boolean; nextPage?: number | null } }).orders;
