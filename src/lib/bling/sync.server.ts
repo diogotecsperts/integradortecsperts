@@ -8,6 +8,8 @@ type Resource = "deposits" | "products" | "stock" | "orders" | "contacts";
 const PAGES_PER_BATCH = 5;
 // Pedidos exigem detail-fetch por item — mais pesado, então menos páginas por tick.
 const ORDERS_PAGES_PER_BATCH = 1;
+// Tamanho da página de pedidos: 20 itens × ~260ms throttle ≈ 5–7s, bem dentro do limite de 30s.
+const ORDERS_PAGE_LIMIT = 20;
 
 async function startRun(
   tenantId: string,
