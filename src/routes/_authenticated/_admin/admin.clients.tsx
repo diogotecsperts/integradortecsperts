@@ -179,11 +179,21 @@ function ClientsPage() {
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center px-4">
+    <div className="fixed inset-0 z-50 grid place-items-center px-4 py-6">
       <div className="absolute inset-0 bg-background/70 backdrop-blur" onClick={onClose} />
-      <div className="glass relative w-full max-w-md rounded-2xl p-6">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <div className="mt-4">{children}</div>
+      <div className="glass relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border/60 bg-background/60 px-6 py-4 backdrop-blur">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar"
+            className="grid h-8 w-8 place-items-center rounded-md border border-border text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
       </div>
     </div>
   );
