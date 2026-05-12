@@ -184,6 +184,7 @@ export const getTenantSettings = createServerFn({ method: "GET" })
       bling_client_secret: "",
       resend_api_key: "",
       minimax_api_key: "",
+      agent_system_prompt: null as string | null,
     };
   });
 
@@ -197,10 +198,12 @@ export const upsertTenantSettings = createServerFn({ method: "POST" })
       bling_client_secret: z.string().default(""),
       resend_api_key: z.string().default(""),
       minimax_api_key: z.string().default(""),
+      agent_system_prompt: z.string().nullable().optional(),
     }).parse(d),
   )
   .handler(async ({ data, context }) => {
     await assertSuperadmin(context.userId);
+    const promptTrim = (data.agent_system_prompt ?? "").trim();
     const { error } = await supabaseAdmin
       .from("tenant_settings")
       .upsert({
@@ -209,6 +212,7 @@ export const upsertTenantSettings = createServerFn({ method: "POST" })
         bling_client_secret: data.bling_client_secret,
         resend_api_key: data.resend_api_key,
         minimax_api_key: data.minimax_api_key,
+        agent_system_prompt: promptTrim ? promptTrim : null,
       }, { onConflict: "tenant_id" });
     if (error) throw new Response(error.message, { status: 400 });
     return { ok: true };
