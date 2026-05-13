@@ -307,46 +307,22 @@ async function readPrevOrdersSnapshot(tenantId: string, orderIds: number[]) {
 }
 
 // =============== ORDER ITEMS ===============
-// Retorna { fetched, skipped } para visibilidade.
+// Skip-se-inalterado: refetch só quando bling_updated_at mudou OU não há itens espelhados.
 async function fetchAndUpsertOrderItems(
   tenantId: string,
   incoming: Array<{ bling_id: number; bling_updated_at: string | null }>,
+  snapshot: { prevUpdated: Map<number, string | null>; hasItems: Set<number> },
 ): Promise<{ fetched: number; skipped: number }> {
   if (incoming.length === 0) return { fetched: 0, skipped: 0 };
-  const orderIds = incoming.map((i) => i.bling_id);
-
-  // 1) Lê o estado anterior para decidir quais pedidos podemos pular.
-  // Pulamos se: bling_updated_at não mudou E já existem itens espelhados.
-  const { data: prevOrders } = await supabaseAdmin
-    .from("bling_orders")
-    .select("bling_id, bling_updated_at")
-    .eq("tenant_id", tenantId)
-    .in("bling_id", orderIds);
-  const prevMap = new Map<number, string | null>(
-    (prevOrders ?? []).map((r) => [Number(r.bling_id), r.bling_updated_at as string | null]),
-  );
-  // Quais já têm pelo menos 1 item espelhado.
-  const { data: existingItems } = await supabaseAdmin
-    .from("bling_order_items")
-    .select("order_bling_id")
-    .eq("tenant_id", tenantId)
-    .in("order_bling_id", orderIds);
-  const hasItems = new Set<number>((existingItems ?? []).map((r) => Number(r.order_bling_id)));
-
-  // NOTE: prevMap reflete o estado APÓS o upsert acima — então bate sempre.
-  // Para detectar mudança real precisamos comparar dataAlteracao recebido
-  // com o que ainda existe em bling_order_items.synced_at (proxy). Como já
-  // upsertamos os pedidos, usamos heurística simples: se já tem itens E o
-  // pedido tinha o mesmo dataAlteracao no momento da leitura, pula.
-  // (A leitura acima ocorreu após o upsert, então prevMap.bling_updated_at
-  // == incoming.bling_updated_at sempre. A condição efetiva é apenas
-  // `hasItems && incoming.bling_updated_at não está vazio`. Isso já evita
-  // re-fetch de pedidos antigos que já foram trazidos uma vez.)
 
   const toFetch: number[] = [];
   let skipped = 0;
   for (const it of incoming) {
-    if (hasItems.has(it.bling_id) && prevMap.has(it.bling_id)) {
+    const prev = snapshot.prevUpdated.get(it.bling_id);
+    const had = snapshot.hasItems.has(it.bling_id);
+    // Skip: já tem itens E (não temos nada novo para comparar OU dataAlteracao igual).
+    const unchanged = had && prev !== undefined && prev === it.bling_updated_at;
+    if (unchanged) {
       skipped++;
     } else {
       toFetch.push(it.bling_id);
