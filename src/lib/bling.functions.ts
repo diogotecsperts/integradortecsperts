@@ -350,7 +350,7 @@ export const getBlingResumeAuditLog = createServerFn({ method: "GET" })
       tenantName: r.tenant_id ? tenantMap.get(r.tenant_id)?.name ?? null : null,
       userId: r.user_id,
       userLabel: r.user_id ? (userMap.get(r.user_id)?.full_name || userMap.get(r.user_id)?.email || r.user_id) : null,
-      metadata: (r.metadata ?? {}) as Record<string, unknown>,
+      metadata: (r.metadata ?? {}) as Record<string, string | number | boolean | null>,
     }));
   });
 
