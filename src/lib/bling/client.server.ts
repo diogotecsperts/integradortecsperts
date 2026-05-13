@@ -156,6 +156,7 @@ export async function blingFetch<T = unknown>(
   path: string,
   init?: RequestInit & {
     searchParams?: Record<string, string | number | Array<string | number> | undefined>;
+    _retry429?: number;
   },
 ): Promise<T> {
   await throttle(tenantId);
@@ -181,8 +182,14 @@ export async function blingFetch<T = unknown>(
     },
   });
   if (res.status === 429) {
-    await new Promise((r) => setTimeout(r, 1500));
-    return blingFetch<T>(tenantId, path, init);
+    const attempt = (init?._retry429 ?? 0) + 1;
+    if (attempt > 3) {
+      throw new BlingError(429, null, `Bling ${path} rate-limited após ${attempt} tentativas`);
+    }
+    // Backoff exponencial: 800ms, 1600ms, 3200ms.
+    const wait = 800 * Math.pow(2, attempt - 1);
+    await new Promise((r) => setTimeout(r, wait));
+    return blingFetch<T>(tenantId, path, { ...init, _retry429: attempt });
   }
   const text = await res.text();
   let json: unknown = null;

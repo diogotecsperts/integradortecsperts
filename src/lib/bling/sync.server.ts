@@ -6,11 +6,11 @@ type Resource = "deposits" | "products" | "stock" | "orders" | "contacts";
 
 // Quantas páginas processamos por execução (batch). Mantém o tick curto e evita timeouts.
 const PAGES_PER_BATCH = 5;
-// Pedidos exigem detail-fetch por item — mais pesado, então menos páginas por tick.
-const ORDERS_PAGES_PER_BATCH = 1;
-// Tamanho da página de pedidos: 40 itens × paralelismo 3 ≈ 4s, bem dentro do limite de 30s.
+// Pedidos: 2 páginas/tick agora que o skip-se-inalterado reduz drasticamente o detail-fetch.
+const ORDERS_PAGES_PER_BATCH = 2;
+// Tamanho da página de pedidos.
 const ORDERS_PAGE_LIMIT = 40;
-// Quantos detail-fetches de pedidos rodam em paralelo (o throttle do client serializa em ~260ms).
+// Quantos detail-fetches de pedidos rodam em paralelo (throttle do client serializa em ~260ms).
 const ORDER_ITEMS_CONCURRENCY = 3;
 
 async function startRun(
@@ -268,35 +268,80 @@ export async function syncOrders(
     pagesPerBatch: ORDERS_PAGES_PER_BATCH,
     pageLimit: ORDERS_PAGE_LIMIT,
     upsert: async (list) => {
+      const incoming = list.map((o) => ({
+        bling_id: Number(o.id),
+        bling_updated_at: (o.dataAlteracao as string) ?? null,
+      }));
+      // 1) LÊ estado anterior ANTES do upsert (para comparar dataAlteracao).
+      const prevSnapshot = await readPrevOrdersSnapshot(tenantId, incoming.map((i) => i.bling_id));
       const rows = list.map(mapOrder(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_orders")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
-      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length}`);
-      // Itens: lista do Bling não traz `itens`; precisamos buscar detalhe.
-      await fetchAndUpsertOrderItems(tenantId, rows.map((r) => r.bling_id));
+      // 2) Decide quem refetchar com base no snapshot anterior.
+      const r = await fetchAndUpsertOrderItems(tenantId, incoming, prevSnapshot);
+      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length} itemsFetched=${r.fetched} itemsSkipped=${r.skipped}`);
       return rows.length;
     },
   });
 }
 
+async function readPrevOrdersSnapshot(tenantId: string, orderIds: number[]) {
+  if (orderIds.length === 0) return { prevUpdated: new Map<number, string | null>(), hasItems: new Set<number>() };
+  const { data: prevOrders } = await supabaseAdmin
+    .from("bling_orders")
+    .select("bling_id, bling_updated_at")
+    .eq("tenant_id", tenantId)
+    .in("bling_id", orderIds);
+  const prevUpdated = new Map<number, string | null>(
+    (prevOrders ?? []).map((r) => [Number(r.bling_id), r.bling_updated_at as string | null]),
+  );
+  const { data: existingItems } = await supabaseAdmin
+    .from("bling_order_items")
+    .select("order_bling_id")
+    .eq("tenant_id", tenantId)
+    .in("order_bling_id", orderIds);
+  const hasItems = new Set<number>((existingItems ?? []).map((r) => Number(r.order_bling_id)));
+  return { prevUpdated, hasItems };
+}
+
 // =============== ORDER ITEMS ===============
-async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
-  if (orderIds.length === 0) return;
-  // 1) Apaga itens antigos desses pedidos para idempotência.
+// Skip-se-inalterado: refetch só quando bling_updated_at mudou OU não há itens espelhados.
+async function fetchAndUpsertOrderItems(
+  tenantId: string,
+  incoming: Array<{ bling_id: number; bling_updated_at: string | null }>,
+  snapshot: { prevUpdated: Map<number, string | null>; hasItems: Set<number> },
+): Promise<{ fetched: number; skipped: number }> {
+  if (incoming.length === 0) return { fetched: 0, skipped: 0 };
+
+  const toFetch: number[] = [];
+  let skipped = 0;
+  for (const it of incoming) {
+    const prev = snapshot.prevUpdated.get(it.bling_id);
+    const had = snapshot.hasItems.has(it.bling_id);
+    // Skip: já tem itens E (não temos nada novo para comparar OU dataAlteracao igual).
+    const unchanged = had && prev !== undefined && prev === it.bling_updated_at;
+    if (unchanged) {
+      skipped++;
+    } else {
+      toFetch.push(it.bling_id);
+    }
+  }
+
+  if (toFetch.length === 0) return { fetched: 0, skipped };
+
+  // 2) Apaga itens antigos só dos pedidos que vamos refetchar.
   const { error: delErr } = await supabaseAdmin
     .from("bling_order_items")
     .delete()
     .eq("tenant_id", tenantId)
-    .in("order_bling_id", orderIds);
+    .in("order_bling_id", toFetch);
   if (delErr) throw new Error(delErr.message);
 
   const allRows: Array<Record<string, unknown>> = [];
-  // Paralelismo limitado: dispara N detail-fetches simultâneos, mas o throttle
-  // por tenant garante que a saída para o Bling ainda fique abaixo de 4 req/s.
-  for (let i = 0; i < orderIds.length; i += ORDER_ITEMS_CONCURRENCY) {
-    const slice = orderIds.slice(i, i + ORDER_ITEMS_CONCURRENCY);
+  for (let i = 0; i < toFetch.length; i += ORDER_ITEMS_CONCURRENCY) {
+    const slice = toFetch.slice(i, i + ORDER_ITEMS_CONCURRENCY);
     const results = await Promise.all(slice.map(async (oid) => {
       try {
         const detail = await blingFetch<{ data?: Record<string, unknown> }>(
@@ -335,6 +380,7 @@ async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
       .insert(allRows as never);
     if (insErr) throw new Error(insErr.message);
   }
+  return { fetched: toFetch.length, skipped };
 }
 
 // ===================== CONTATOS =====================
@@ -447,7 +493,7 @@ async function runPaginatedBatch(args: {
       .update({ heartbeat_at: new Date().toISOString(), items_processed: count })
       .eq("id", runId)
       .then(() => undefined);
-  }, 30_000);
+  }, 10_000);
 
   try {
     for (let i = 0; i < pagesPerBatch; i++) {

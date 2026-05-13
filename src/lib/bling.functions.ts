@@ -63,12 +63,12 @@ export const getBlingStatus = createServerFn({ method: "GET" })
       .eq("tenant_id", tenantId).maybeSingle();
 
     const [{ count: nProducts }, { count: nDeposits }, { count: nStocks }, { count: nOrders }, { count: nContacts }, { count: nOrderItems }] = await Promise.all([
-      supabaseAdmin.from("bling_products").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
-      supabaseAdmin.from("bling_deposits").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
-      supabaseAdmin.from("bling_stock_balances").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
-      supabaseAdmin.from("bling_orders").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
-      supabaseAdmin.from("bling_contacts").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
-      supabaseAdmin.from("bling_order_items").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_products").select("*", { count: "estimated", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_deposits").select("*", { count: "estimated", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_stock_balances").select("*", { count: "estimated", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_orders").select("*", { count: "estimated", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_contacts").select("*", { count: "estimated", head: true }).eq("tenant_id", tenantId),
+      supabaseAdmin.from("bling_order_items").select("*", { count: "estimated", head: true }).eq("tenant_id", tenantId),
     ]);
     const { data: lastRuns } = await supabaseAdmin
       .from("bling_sync_runs")
