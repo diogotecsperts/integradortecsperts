@@ -365,6 +365,10 @@ type CronHealthRow = {
   last_message: string | null;
   failures_last_hour: number;
   runs_last_hour: number;
+  last_failure_at: string | null;
+  last_failure_message: string | null;
+  last_failure_command: string | null;
+  recent_runs: Array<{ start_time: string; status: string; http_code: number | null; message: string }>;
 };
 
 export const getBlingCronHealth = createServerFn({ method: "GET" })
