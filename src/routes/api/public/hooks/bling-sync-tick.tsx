@@ -51,7 +51,7 @@ export const Route = createFileRoute("/api/public/hooks/bling-sync-tick")({
               .select("id, resource")
               .eq("tenant_id", tenantId)
               .in("resource", PRIMARY as unknown as string[])
-              .eq("status", "running")
+              .in("status", ["running", "paused"])
               .not("next_page", "is", null)
               .order("started_at", { ascending: true })
               .limit(1)

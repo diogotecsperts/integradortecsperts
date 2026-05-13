@@ -7,6 +7,7 @@ import { createBlingAuthLink, disconnectBling, getBlingStatus } from "@/lib/blin
 import { useAuth } from "@/hooks/use-auth";
 import { formatRelative } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { classifyError, KIND_BADGE } from "@/lib/bling/error-classify";
 
 export const Route = createFileRoute("/_authenticated/integracao-bling")({
   component: IntegracaoBlingPage,
@@ -235,18 +236,25 @@ function ClientView() {
                   <td className="text-xs text-muted-foreground">{new Date(r.started_at).toLocaleString("pt-BR")}</td>
                   <td>{r.items_processed}</td>
                   <td className="max-w-[24rem] text-xs text-muted-foreground">
-                    {r.error_message ? (
-                      <TooltipProvider delayDuration={150}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="block cursor-help truncate text-destructive/90" title={r.error_message}>{r.error_message}</span>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
-                            {r.error_message}
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    ) : "—"}
+                    {r.error_message ? (() => {
+                      const k = classifyError(r.error_message);
+                      return (
+                        <TooltipProvider delayDuration={150}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="flex cursor-help items-center gap-1.5">
+                                <span className={`rounded border px-1 py-px text-[9px] font-semibold uppercase ${KIND_BADGE[k.kind]}`}>{k.label}</span>
+                                <span className="block truncate text-destructive/90" title={r.error_message}>{r.error_message}</span>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
+                              <div className="mb-1 text-[10px] font-semibold uppercase opacity-80">{k.label} — {k.hint}</div>
+                              {r.error_message}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      );
+                    })() : "—"}
                   </td>
                 </tr>
               ))}

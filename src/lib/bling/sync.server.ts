@@ -49,13 +49,27 @@ async function heartbeat(runId: string, page: number, items: number) {
 }
 
 async function pauseRun(runId: string, nextPage: number, items: number) {
+  // status='paused' tira a run do radar do reaper (que só mata 'running' stale).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await supabaseAdmin
     .from("bling_sync_runs")
     .update({
+      status: "paused" as never,
       next_page: nextPage,
       items_processed: items,
       heartbeat_at: new Date().toISOString(),
-    })
+    } as any)
+    .eq("id", runId);
+}
+
+async function markRunning(runId: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await supabaseAdmin
+    .from("bling_sync_runs")
+    .update({
+      status: "running" as never,
+      heartbeat_at: new Date().toISOString(),
+    } as any)
     .eq("id", runId);
 }
 
@@ -413,6 +427,8 @@ async function runPaginatedBatch(args: {
     count = data.items_processed ?? 0;
     const m = (data.meta as { dataAlteracaoInicial?: string } | null) ?? null;
     dataAlteracaoInicial = m?.dataAlteracaoInicial;
+    // Sai de 'paused' e volta para 'running' antes do primeiro fetch.
+    await markRunning(runId);
   } else {
     if (mode === "incremental") {
       const last = await getLastOkFinishedAt(tenantId, resource);

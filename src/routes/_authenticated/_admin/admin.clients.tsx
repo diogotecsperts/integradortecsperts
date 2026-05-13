@@ -10,7 +10,8 @@ import * as React from "react";
 import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink, X } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
-import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling } from "@/lib/bling.functions";
+import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling, setupBlingCron } from "@/lib/bling.functions";
+import { classifyError, KIND_BADGE } from "@/lib/bling/error-classify";
 
 export const Route = createFileRoute("/_authenticated/_admin/admin/clients")({
   component: ClientsPage,
@@ -70,6 +71,13 @@ function ClientsPage() {
     onError: async (e) => toast.error(await errMsg(e)),
   });
 
+  const cron = useServerFn(setupBlingCron);
+  const mCron = useMutation({
+    mutationFn: () => cron(),
+    onSuccess: (r) => toast.success(`Agendamento OK: ${r.schedule} → ${r.url}`),
+    onError: async (e) => toast.error(await errMsg(e)),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -77,13 +85,24 @@ function ClientsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Clientes</h1>
           <p className="mt-1 text-sm text-muted-foreground">Gerencie tenants e seus usuários.</p>
         </div>
-        <button
-          onClick={() => setOpenTenant(true)}
-          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-primary-foreground"
-          style={{ background: "var(--gradient-primary)" }}
-        >
-          <Plus className="h-4 w-4" /> Novo Tenant
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => mCron.mutate()}
+            disabled={mCron.isPending}
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-secondary disabled:opacity-50"
+            title="Agenda (ou re-agenda) o cron do Bling para rodar a cada 5 minutos."
+          >
+            {mCron.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Configurar Agendamento Automático
+          </button>
+          <button
+            onClick={() => setOpenTenant(true)}
+            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-primary-foreground"
+            style={{ background: "var(--gradient-primary)" }}
+          >
+            <Plus className="h-4 w-4" /> Novo Tenant
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -495,32 +514,44 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
       {data?.lastRuns && data.lastRuns.length > 0 && (
         <TooltipProvider delayDuration={150}>
           <div className="max-h-56 space-y-1 overflow-auto text-[11px]">
-            {data.lastRuns.slice(0, 8).map((r) => (
-              <div key={r.id} className="border-t border-border/40 pt-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
-                  {r.status === "error" && r.error_message ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="cursor-help text-destructive underline decoration-dotted">{r.status}</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
-                        {r.error_message}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
-                  )}
-                  <span className="text-muted-foreground">{r.items_processed} itens</span>
-                  <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
-                </div>
-                {r.status === "error" && r.error_message && (
-                  <div className="mt-0.5 truncate text-[10px] text-destructive/80" title={r.error_message}>
-                    {r.error_message}
+            {data.lastRuns.slice(0, 8).map((r) => {
+              const k = classifyError(r.error_message);
+              return (
+                <div key={r.id} className="border-t border-border/40 pt-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
+                    {r.status === "error" && r.error_message ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex cursor-help items-center gap-1">
+                            <span className={`rounded border px-1 py-px text-[9px] font-semibold uppercase ${KIND_BADGE[k.kind]}`}>{k.label}</span>
+                            <span className="text-destructive underline decoration-dotted">{r.status}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
+                          <div className="mb-1 text-[10px] font-semibold uppercase opacity-80">{k.label} — {k.hint}</div>
+                          {r.error_message}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className={
+                        r.status === "ok" ? "text-emerald-400"
+                          : r.status === "error" ? "text-destructive"
+                          : r.status === "paused" ? "text-amber-400"
+                          : "text-primary"
+                      }>{r.status}</span>
+                    )}
+                    <span className="text-muted-foreground">{r.items_processed} itens</span>
+                    <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
                   </div>
-                )}
-              </div>
-            ))}
+                  {r.status === "error" && r.error_message && (
+                    <div className="mt-0.5 truncate text-[10px] text-destructive/80" title={r.error_message}>
+                      [{k.label}] {r.error_message}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </TooltipProvider>
       )}
@@ -547,7 +578,7 @@ type RunRow = {
 };
 
 function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
-  const running = lastRuns.find((r) => r.status === "running" && r.next_page != null);
+  const running = lastRuns.find((r) => (r.status === "running" || r.status === "paused") && r.next_page != null);
   const [, force] = React.useReducer((x: number) => x + 1, 0);
   React.useEffect(() => {
     if (!running) return;
