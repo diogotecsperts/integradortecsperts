@@ -25,9 +25,23 @@ function ClientsPage() {
   const setBlocked = useServerFn(setUserBlocked);
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery({ queryKey: ["admin", "tenants"], queryFn: () => list() });
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin", "tenants"],
+    queryFn: () => list(),
+    staleTime: 60_000,
+  });
   const tenants = data?.tenants ?? [];
   const profiles = data?.profiles ?? [];
+  // Index profiles por tenant uma única vez para evitar O(N×M) por render.
+  const profilesByTenant = React.useMemo(() => {
+    const m = new Map<string, typeof profiles>();
+    for (const p of profiles) {
+      const arr = m.get(p.tenant_id ?? "") ?? [];
+      arr.push(p);
+      m.set(p.tenant_id ?? "", arr);
+    }
+    return m;
+  }, [profiles]);
 
   const [openTenant, setOpenTenant] = React.useState(false);
   const [openUser, setOpenUser] = React.useState<string | null>(null);
