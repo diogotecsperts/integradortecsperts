@@ -578,7 +578,7 @@ type RunRow = {
 };
 
 function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
-  const running = lastRuns.find((r) => r.status === "running" && r.next_page != null);
+  const running = lastRuns.find((r) => (r.status === "running" || r.status === "paused") && r.next_page != null);
   const [, force] = React.useReducer((x: number) => x + 1, 0);
   React.useEffect(() => {
     if (!running) return;
