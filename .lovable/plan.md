@@ -1,109 +1,68 @@
-## Objetivo
 
-Tornar a sincronização Bling resiliente a runs longas (sem o reaper matar tarefas só porque elas estão entre ticks) e remover a necessidade de rodar SQL manualmente para configurar o `pg_cron`.
+# Diagnóstico + Plano
 
----
+## Por que "Pedidos" é absurdamente mais lento que "Contatos"
 
-## 1. Novo status `paused` (separar "aguardando próximo tick" de "em execução agora")
+A diferença não é volume — é o **número de chamadas HTTP por item**:
 
-**Migration (DB):**
-- `ALTER TYPE bling_sync_status ADD VALUE 'paused';`
-- Atualizar `reap_stale_bling_runs()` para considerar **stale** apenas runs em `status = 'running'` sem heartbeat há > 5 min. Runs em `paused` são ignoradas pelo reaper (não têm heartbeat porque estão dormindo entre ticks).
+| Recurso  | Itens por requisição Bling | Chamadas para 480 itens |
+|----------|----------------------------|-------------------------|
+| Contatos | 100 por página (lista já traz tudo) | **5** chamadas |
+| Pedidos  | Lista NÃO traz `itens` → 1 GET por pedido (`/pedidos/vendas/{id}`) | **480 + paginação ≈ 492** chamadas |
 
-**`src/lib/bling/sync.server.ts`:**
-- `pauseRun()`: além de salvar `next_page` e `items_processed`, atualizar `status = 'paused'` e limpar `heartbeat_at` (ou deixar como está — o reaper só olha `running`).
-- `runPaginatedBatch()`: ao retomar (`resumeRunId`), o primeiro update deve setar `status = 'running'` e `heartbeat_at = now()` antes do primeiro fetch.
-- `endRun()` continua setando `ok` ou `error` normalmente (sobrescreve `paused`/`running`).
+Com o throttle de **4 req/s** do Bling (260 ms entre chamadas), Promise.all não ajuda — a fila por tenant serializa tudo. Resultado teórico:
+- Contatos 6000: 60 chamadas × 0,26 s ≈ **16 s**
+- Pedidos 480: 492 chamadas × 0,26 s ≈ **128 s** (dados reais mostram 600-700s, indicando latência adicional do Bling + 429s)
 
-**`src/routes/api/public/hooks/bling-sync-tick.tsx`:**
-- A query que busca runs para retomar deve usar `.in("status", ["running", "paused"])` no lugar de `.eq("status", "running")`.
-- Continuar exigindo `next_page IS NOT NULL` (sinal de que há trabalho pendente).
+É um clássico **N+1**: a lista é "grátis", o detalhe é caríssimo. Não é bug — é o desenho da API Bling. Só dá para mitigar evitando refetchar detalhes quando o pedido não mudou.
 
----
+Outra evidência do banco (`bling_sync_runs`):
+- A run "ok" mais antiga fez **49.544 pedidos em 330 s** — só foi possível porque na época o detail-fetch ainda não existia.
+- As runs recentes morrem com `Stale: sem heartbeat há mais de 5 minutos` mesmo com o ticker de 30 s. Causa provável: o Worker (Cloudflare) é morto quando o tick estoura o limite de duração com 40 detalhes em sequência + retries 429, parando o heartbeat.
 
-## 2. Auto-configuração do cron por botão
+## Por que as páginas ficam lentas (Configurações ↔ Clientes)
 
-**`src/lib/bling.functions.ts`** — nova server function `setupBlingCron`:
-- Restrita a superadmin (`assertSuperadmin`).
-- Usa `supabaseAdmin.rpc("exec_sql", ...)` **ou** mais simples: faz `supabaseAdmin.from("...").rpc()` chamando uma função SQL `setup_bling_cron(url text, apikey text)` que criamos via migration. (Postgres não permite executar SQL arbitrário via PostgREST diretamente, então o caminho limpo é uma função SQL `SECURITY DEFINER`.)
-- Parâmetros derivados no servidor:
-  - `url` = `https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-tick`
-  - `apikey` = `process.env.SUPABASE_PUBLISHABLE_KEY`
-- A função SQL faz: `SELECT cron.unschedule('bling-sync-tick')` (ignorando erro se não existir) e depois `cron.schedule('bling-sync-tick', '*/5 * * * *', $$ SELECT net.http_post(url:=..., headers:=..., body:='{}'::jsonb) $$)`.
-- Retorna `{ ok: true, schedule: '*/5 * * * *', url }`.
+1. **`BlingAdminPanel` faz 6 `COUNT(exact)` + lista 20 runs a cada 10 s, por tenant na tela** (`refetchInterval: 10000` em `getBlingStatus`). Em `bling_order_items` e `bling_orders` (dezenas de milhares de linhas), cada COUNT exato é um scan parcial. Com N tenants expandidos = 6×N counts a cada 10 s. É o maior ofensor.
+2. `useQuery` sem `staleTime` em `listTenantsAdmin` e `getBlingStatus` → toda navegação refaz TODA a query, mesmo voltando de `/admin/settings`.
+3. `listTenantsAdmin` carrega **todos** os profiles sem paginação nem filtro.
+4. Falta índice em `bling_order_items(tenant_id)` (e provavelmente em `bling_orders(tenant_id)`), tornando COUNTs ainda mais caros.
 
-**Migration (DB):**
-- Garantir extensões `pg_cron` e `pg_net` (já devem estar).
-- Criar `public.setup_bling_cron(p_url text, p_apikey text)` `SECURITY DEFINER` que executa o (un)schedule descrito acima. Restringir `EXECUTE` a `service_role`.
+## Plano de correções
 
-**`src/routes/_authenticated/_admin/admin.clients.tsx`:**
-- Botão **"Configurar agendamento automático"** no header da página (área de superadmin).
-- `useMutation` que chama `setupBlingCron`, mostra toast com URL/cron configurados.
+### A) Sync de Pedidos — quebrar o N+1
 
----
+1. **Skip de detalhe quando nada mudou.** Antes do `fetchAndUpsertOrderItems`, ler os pares `(bling_id, bling_updated_at)` já existentes em `bling_orders` para os IDs do batch. Se `dataAlteracao` da lista == `bling_updated_at` armazenado **e** já existe `bling_order_items` para o pedido, não buscar detalhe. Em sync incremental isso reduz ~95% dos detail-fetches.
+2. **Aumentar `ORDERS_PAGES_PER_BATCH` para 2** e o ticker de heartbeat para a cada 10 s (em vez de 30 s) — reduz risco de stale e ainda cabe no Worker quando o item-skip vale.
+3. **Backoff exponencial em 429** (hoje é fixo 1500 ms). Após 2 retries, abortar a página e pausar para o próximo tick.
+4. Logar no `meta` da run quantos detalhes foram pulados vs. buscados, para visibilidade.
 
-## 3. Tooltip de erro: distinguir Stale vs API
+### B) Página Admin/Clientes — fim do refetch agressivo
 
-**`src/routes/_authenticated/_admin/admin.clients.tsx` e `src/routes/_authenticated/integracao-bling.tsx`:**
-- O Tooltip de erro já mostra `error_message`. Adicionar um **prefixo/badge** acima da mensagem:
-  - Se `error_message` começa com `"Stale:"` → badge `STALE` (cinza/amarelo) + texto "Reaper matou — run ficou sem heartbeat".
-  - Se contém `"BlingError"` ou status HTTP → badge `API BLING` (vermelho).
-  - Caso contrário → badge `INTERNO`.
-- Pequena função utilitária `classifyError(msg)` no mesmo arquivo.
+5. **`getBlingStatus`**: aumentar `refetchInterval` para 60 s (status muda devagar) e `staleTime: 30_000`. Torna a heatmap de COUNTs 6× mais leve.
+6. **Trocar `count: "exact"` por `count: "estimated"`** nos 6 COUNTs (`bling_products/orders/items/...`). Para o painel de status uma estimativa serve — exato custa scan.
+7. **`listTenantsAdmin`**: adicionar `staleTime: 60_000` no `useQuery`, e selecionar só as colunas usadas em `profiles` (sem `created_at` se não exibido).
+8. Memoizar `profiles.filter(p => p.tenant_id === t.id)` (hoje roda O(N×M) a cada render).
 
----
+### C) Resiliência das runs longas
+
+9. Migration: criar índices `bling_order_items(tenant_id, order_bling_id)` e `bling_orders(tenant_id, bling_updated_at)` se não existirem.
+10. Reaper: aumentar tolerância para 8 min (algumas runs ficam 5-6 min sem chance de heartbeat quando o Worker está com fila).
 
 ## Detalhes técnicos
 
-**Reaper atualizado (resumo SQL):**
-```sql
-UPDATE bling_sync_runs
-SET status='error', finished_at=now(),
-    error_message=COALESCE(error_message,'Stale: sem heartbeat há mais de 5 minutos')
-WHERE status='running'  -- não toca em 'paused'
-  AND COALESCE(heartbeat_at, started_at) < now() - interval '5 minutes';
-```
+**Arquivos editados:**
+- `src/lib/bling/sync.server.ts` — skip de detail-fetch, heartbeat 10s, backoff 429, 2 páginas/tick.
+- `src/lib/bling/client.server.ts` — backoff exponencial em 429.
+- `src/lib/bling.functions.ts` — `getBlingStatus` usando `count: "estimated"` (tipagem `head: true, count: "estimated"`).
+- `src/routes/_authenticated/_admin/admin.clients.tsx` — `staleTime` + `refetchInterval` ajustados, `useMemo` no filtro de profiles.
+- `src/routes/_authenticated/integracao-bling.tsx` — mesmos ajustes de cache.
+- Nova migration: índices + ajuste do reaper para 8 min.
 
-**Resume flow:**
-```
-tick → busca run com status IN ('running','paused') AND next_page IS NOT NULL
-     → marca status='running', heartbeat_at=now()
-     → roda runPaginatedBatch
-     → no fim do batch: pauseRun → status='paused', next_page=N
-```
+**Não vou mexer em:**
+- Estrutura do throttle por tenant (já está correta).
+- `pauseRun`/`markRunning` (já corrigido na rodada anterior).
+- Lógica de cron / setup automático.
 
-**Função SQL `setup_bling_cron`:**
-```sql
-CREATE OR REPLACE FUNCTION public.setup_bling_cron(p_url text, p_apikey text)
-RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public, cron, net AS $$
-BEGIN
-  PERFORM cron.unschedule('bling-sync-tick')
-    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='bling-sync-tick');
-  PERFORM cron.schedule('bling-sync-tick', '*/5 * * * *',
-    format($c$ SELECT net.http_post(
-      url:=%L,
-      headers:=jsonb_build_object('Content-Type','application/json','apikey',%L),
-      body:='{}'::jsonb) $c$, p_url, p_apikey));
-  RETURN 'scheduled */5 * * * * → '||p_url;
-END $$;
-REVOKE ALL ON FUNCTION public.setup_bling_cron(text,text) FROM PUBLIC;
-```
-
----
-
-## Arquivos tocados
-
-1. **Migration nova** — adiciona enum `paused`, atualiza `reap_stale_bling_runs`, cria `setup_bling_cron`.
-2. `src/lib/bling/sync.server.ts` — `pauseRun` (status=paused), retomada (status=running + heartbeat).
-3. `src/routes/api/public/hooks/bling-sync-tick.tsx` — query aceita `running` e `paused`.
-4. `src/lib/bling.functions.ts` — server fn `setupBlingCron`.
-5. `src/routes/_authenticated/_admin/admin.clients.tsx` — botão "Configurar agendamento automático" + classificação visual de erro no Tooltip.
-6. `src/routes/_authenticated/integracao-bling.tsx` — mesma classificação visual no Tooltip.
-
----
-
-## Resultado esperado
-
-- Runs longas **não morrem mais** entre ticks (status `paused` sai do radar do reaper).
-- Um clique em "Configurar agendamento automático" agenda o cron a cada 5 min — sem SQL manual.
-- O Tooltip de erro mostra de cara se o problema foi reaper (`STALE`), API do Bling, ou erro interno — facilitando diagnóstico.
+**Resultado esperado:**
+- Sync incremental de pedidos cai de ~600 s para <30 s quando poucas alterações (caso comum).
+- Mudança entre `/admin/settings` e `/admin/clients` deixa de disparar 6 COUNTs exatos por tenant — fica instantânea.
