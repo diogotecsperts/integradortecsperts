@@ -86,13 +86,6 @@ function ClientsPage() {
     onError: async (e) => toast.error(await errMsg(e)),
   });
 
-  const cron = useServerFn(setupBlingCron);
-  const mCron = useMutation({
-    mutationFn: () => cron(),
-    onSuccess: (r) => toast.success(`Agendamento OK: ${r.schedule} → ${r.url}`),
-    onError: async (e) => toast.error(await errMsg(e)),
-  });
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -102,15 +95,6 @@ function ClientsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => mCron.mutate()}
-            disabled={mCron.isPending}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-secondary disabled:opacity-50"
-            title="Agenda (ou re-agenda) o cron do Bling para rodar a cada 5 minutos."
-          >
-            {mCron.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Configurar Agendamento Automático
-          </button>
-          <button
             onClick={() => setOpenTenant(true)}
             className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-primary-foreground"
             style={{ background: "var(--gradient-primary)" }}
@@ -119,6 +103,8 @@ function ClientsPage() {
           </button>
         </div>
       </div>
+
+      <BlingCronHealthCard />
 
       {isLoading ? (
         <div className="glass grid h-40 place-items-center rounded-2xl">
