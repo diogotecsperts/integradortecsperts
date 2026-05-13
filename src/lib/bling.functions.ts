@@ -244,3 +244,87 @@ export const setupBlingCron = createServerFn({ method: "POST" })
     return { ok: true, schedule: "*/5 * * * *", url, projectId, result: data };
   });
 
+// ============ RETOMAR RUN PAUSADA (apenas superadmin) ============
+const RESUMABLE = ["orders", "products", "contacts"] as const;
+type ResumableRes = typeof RESUMABLE[number];
+
+export const resumeBlingRun = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) =>
+    z.object({
+      tenantId: z.string().uuid(),
+      resource: z.enum(RESUMABLE),
+    }).parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    await assertSuperadmin(context.userId);
+    const { data: pending } = await supabaseAdmin
+      .from("bling_sync_runs")
+      .select("id, next_page, items_processed")
+      .eq("tenant_id", data.tenantId)
+      .eq("resource", data.resource)
+      .in("status", ["running", "paused"])
+      .not("next_page", "is", null)
+      .order("started_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!pending?.id) {
+      return { resumed: false as const, reason: "no-paused-run" as const };
+    }
+
+    const fn = data.resource === "orders" ? syncOrders : data.resource === "products" ? syncProducts : syncContacts;
+    const r = await fn(data.tenantId, "incremental", { resumeRunId: pending.id });
+    return {
+      resumed: true as const,
+      runId: pending.id,
+      previousNextPage: pending.next_page,
+      previousItems: pending.items_processed,
+      done: r.done,
+      count: r.count,
+      nextPage: r.nextPage,
+    };
+  });
+
+// ============ HEALTH DO CRON (apenas superadmin) ============
+type CronHealthRow = {
+  jobname: string;
+  schedule: string;
+  active: boolean;
+  last_run_at: string | null;
+  last_status: string | null;
+  last_http_code: number | null;
+  last_message: string | null;
+  failures_last_hour: number;
+  runs_last_hour: number;
+};
+
+export const getBlingCronHealth = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertSuperadmin(context.userId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabaseAdmin.rpc as any)("bling_cron_health");
+    if (error) throw new Response(error.message, { status: 500 });
+
+    // Pings do endpoint de health (independente do cron) para detectar 404 imediato.
+    const projectUrl = `https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-health`;
+    let pingStatus: number | null = null;
+    let pingError: string | null = null;
+    let pingMs: number | null = null;
+    try {
+      const t0 = Date.now();
+      const res = await fetch(projectUrl, { method: "GET" });
+      pingMs = Date.now() - t0;
+      pingStatus = res.status;
+    } catch (e) {
+      pingError = e instanceof Error ? e.message : String(e);
+    }
+
+    return {
+      jobs: (data ?? []) as CronHealthRow[],
+      ping: { url: projectUrl, status: pingStatus, ms: pingMs, error: pingError },
+      checkedAt: new Date().toISOString(),
+    };
+  });
+

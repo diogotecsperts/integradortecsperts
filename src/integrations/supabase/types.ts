@@ -823,6 +823,20 @@ export type Database = {
           qtd_total: number
         }[]
       }
+      bling_cron_health: {
+        Args: never
+        Returns: {
+          active: boolean
+          failures_last_hour: number
+          jobname: string
+          last_http_code: number
+          last_message: string
+          last_run_at: string
+          last_status: string
+          runs_last_hour: number
+          schedule: string
+        }[]
+      }
       get_user_tenant: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {

@@ -10,8 +10,9 @@ import * as React from "react";
 import { Plus, Lock, Unlock, UserPlus, Loader2, Settings as SettingsIcon, Eye, EyeOff, RefreshCw, Plug, Unplug, Copy, ExternalLink, X } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./admin.index";
-import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling, setupBlingCron } from "@/lib/bling.functions";
+import { runBlingSync, getBlingStatus, createBlingAuthLink, disconnectBling, resumeBlingRun } from "@/lib/bling.functions";
 import { classifyError, KIND_BADGE } from "@/lib/bling/error-classify";
+import { BlingCronHealthCard } from "@/components/admin/BlingCronHealthCard";
 
 export const Route = createFileRoute("/_authenticated/_admin/admin/clients")({
   component: ClientsPage,
@@ -85,13 +86,6 @@ function ClientsPage() {
     onError: async (e) => toast.error(await errMsg(e)),
   });
 
-  const cron = useServerFn(setupBlingCron);
-  const mCron = useMutation({
-    mutationFn: () => cron(),
-    onSuccess: (r) => toast.success(`Agendamento OK: ${r.schedule} → ${r.url}`),
-    onError: async (e) => toast.error(await errMsg(e)),
-  });
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -101,15 +95,6 @@ function ClientsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => mCron.mutate()}
-            disabled={mCron.isPending}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-secondary disabled:opacity-50"
-            title="Agenda (ou re-agenda) o cron do Bling para rodar a cada 5 minutos."
-          >
-            {mCron.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Configurar Agendamento Automático
-          </button>
-          <button
             onClick={() => setOpenTenant(true)}
             className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-primary-foreground"
             style={{ background: "var(--gradient-primary)" }}
@@ -118,6 +103,8 @@ function ClientsPage() {
           </button>
         </div>
       </div>
+
+      <BlingCronHealthCard />
 
       {isLoading ? (
         <div className="glass grid h-40 place-items-center rounded-2xl">
@@ -512,7 +499,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <SyncBtn label="Pedidos (full)" onClick={() => m.mutate({ resource: "orders", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Pedidos (incr.)" onClick={() => m.mutate({ resource: "orders", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
       </div>
-      <FullSyncBanner lastRuns={data?.lastRuns ?? []} />
+      <FullSyncBanner tenantId={tenantId} lastRuns={data?.lastRuns ?? []} />
       <button type="button" disabled={m.isPending || !data?.connected}
         onClick={() => {
           const ok = window.confirm(
@@ -592,9 +579,21 @@ type RunRow = {
   started_at: string;
 };
 
-function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
+function FullSyncBanner({ tenantId, lastRuns }: { tenantId: string; lastRuns: ReadonlyArray<RunRow> }) {
   const running = lastRuns.find((r) => (r.status === "running" || r.status === "paused") && r.next_page != null);
   const [, force] = React.useReducer((x: number) => x + 1, 0);
+  const resume = useServerFn(resumeBlingRun);
+  const qc = useQueryClient();
+  const mResume = useMutation({
+    mutationFn: (resource: "orders" | "products" | "contacts") => resume({ data: { tenantId, resource } }),
+    onSuccess: (r) => {
+      if (!r.resumed) toast.message("Nada para retomar", { description: "Nenhuma run pausada para este recurso." });
+      else if (r.done) toast.success(`Retomada concluída — ${r.count} itens processados.`);
+      else toast.success(`Retomada disparada — pág atual ${r.nextPage}. O cron continua a partir daqui.`);
+      qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] });
+    },
+    onError: async (e) => toast.error(e instanceof Response ? await e.text() : (e as Error).message),
+  });
   React.useEffect(() => {
     if (!running) return;
     const t = setInterval(() => force(), 5000);
@@ -604,10 +603,24 @@ function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
   const ref = running.heartbeat_at ?? running.started_at;
   const ageSec = Math.max(0, Math.floor((Date.now() - new Date(ref).getTime()) / 1000));
   const stale = ageSec > 60;
+  const isResumable = running.resource === "orders" || running.resource === "products" || running.resource === "contacts";
   return (
     <div className={`rounded-md border px-2 py-1.5 text-[11px] ${stale ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-amber-500/30 bg-amber-500/5 text-amber-300"}`}>
-      ⚠ Sync em andamento ({RES_LABEL[running.resource] ?? running.resource}, página {running.next_page}). Não feche esta aba.
-      <div className="mt-0.5 opacity-80">Último heartbeat: {ageSec}s atrás{stale ? " — possivelmente travado" : ""}.</div>
+      <div>⚠ Sync em andamento ({RES_LABEL[running.resource] ?? running.resource}, página {running.next_page}). Não feche esta aba.</div>
+      <div className="mt-0.5 flex items-center justify-between gap-2 opacity-90">
+        <span>Último heartbeat: {ageSec}s atrás{stale ? " — possivelmente travado" : ""}.</span>
+        {isResumable && (
+          <button
+            type="button"
+            disabled={mResume.isPending}
+            onClick={() => mResume.mutate(running.resource as "orders" | "products" | "contacts")}
+            className="inline-flex items-center gap-1 rounded border border-current/40 px-2 py-0.5 text-[10px] font-semibold uppercase hover:bg-current/10 disabled:opacity-50"
+          >
+            {mResume.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Retomar agora
+          </button>
+        )}
+      </div>
     </div>
   );
 }
