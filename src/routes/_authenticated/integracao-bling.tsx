@@ -7,6 +7,7 @@ import { createBlingAuthLink, disconnectBling, getBlingStatus } from "@/lib/blin
 import { useAuth } from "@/hooks/use-auth";
 import { formatRelative } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { classifyError, KIND_BADGE } from "@/lib/bling/error-classify";
 
 export const Route = createFileRoute("/_authenticated/integracao-bling")({
   component: IntegracaoBlingPage,
