@@ -829,10 +829,14 @@ export type Database = {
           active: boolean
           failures_last_hour: number
           jobname: string
+          last_failure_at: string
+          last_failure_command: string
+          last_failure_message: string
           last_http_code: number
           last_message: string
           last_run_at: string
           last_status: string
+          recent_runs: Json
           runs_last_hour: number
           schedule: string
         }[]
