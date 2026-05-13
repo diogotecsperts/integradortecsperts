@@ -226,3 +226,21 @@ async function runUntil(
   return { ...res, totalProcessed: total, batches, completed: res.done };
 }
 
+// ============ AUTO-CONFIG DO CRON (apenas superadmin) ============
+export const setupBlingCron = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertSuperadmin(context.userId);
+
+    const projectId = process.env.VITE_SUPABASE_PROJECT_ID ?? "ydajwcnghxjcmoaqbwwy";
+    // URL estável publicada (serve o último deploy publicado).
+    const url = `https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-tick`;
+    const apikey = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    if (!apikey) throw new Response("SUPABASE_PUBLISHABLE_KEY ausente no servidor", { status: 500 });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabaseAdmin.rpc as any)("setup_bling_cron", { p_url: url, p_apikey: apikey });
+    if (error) throw new Response(error.message, { status: 500 });
+    return { ok: true, schedule: "*/5 * * * *", url, projectId, result: data };
+  });
+
