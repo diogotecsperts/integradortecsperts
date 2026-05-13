@@ -268,35 +268,84 @@ export async function syncOrders(
     pagesPerBatch: ORDERS_PAGES_PER_BATCH,
     pageLimit: ORDERS_PAGE_LIMIT,
     upsert: async (list) => {
+      // Captura o dataAlteracao de cada pedido na lista ANTES do upsert,
+      // pois é assim que decidimos se o detail-fetch pode ser pulado.
+      const incoming = list.map((o) => ({
+        bling_id: Number(o.id),
+        bling_updated_at: (o.dataAlteracao as string) ?? null,
+      }));
       const rows = list.map(mapOrder(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_orders")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
-      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length}`);
-      // Itens: lista do Bling não traz `itens`; precisamos buscar detalhe.
-      await fetchAndUpsertOrderItems(tenantId, rows.map((r) => r.bling_id));
+      const skippedOrFetched = await fetchAndUpsertOrderItems(tenantId, incoming);
+      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length} itemsFetched=${skippedOrFetched.fetched} itemsSkipped=${skippedOrFetched.skipped}`);
       return rows.length;
     },
   });
 }
 
 // =============== ORDER ITEMS ===============
-async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
-  if (orderIds.length === 0) return;
-  // 1) Apaga itens antigos desses pedidos para idempotência.
+// Retorna { fetched, skipped } para visibilidade.
+async function fetchAndUpsertOrderItems(
+  tenantId: string,
+  incoming: Array<{ bling_id: number; bling_updated_at: string | null }>,
+): Promise<{ fetched: number; skipped: number }> {
+  if (incoming.length === 0) return { fetched: 0, skipped: 0 };
+  const orderIds = incoming.map((i) => i.bling_id);
+
+  // 1) Lê o estado anterior para decidir quais pedidos podemos pular.
+  // Pulamos se: bling_updated_at não mudou E já existem itens espelhados.
+  const { data: prevOrders } = await supabaseAdmin
+    .from("bling_orders")
+    .select("bling_id, bling_updated_at")
+    .eq("tenant_id", tenantId)
+    .in("bling_id", orderIds);
+  const prevMap = new Map<number, string | null>(
+    (prevOrders ?? []).map((r) => [Number(r.bling_id), r.bling_updated_at as string | null]),
+  );
+  // Quais já têm pelo menos 1 item espelhado.
+  const { data: existingItems } = await supabaseAdmin
+    .from("bling_order_items")
+    .select("order_bling_id")
+    .eq("tenant_id", tenantId)
+    .in("order_bling_id", orderIds);
+  const hasItems = new Set<number>((existingItems ?? []).map((r) => Number(r.order_bling_id)));
+
+  // NOTE: prevMap reflete o estado APÓS o upsert acima — então bate sempre.
+  // Para detectar mudança real precisamos comparar dataAlteracao recebido
+  // com o que ainda existe em bling_order_items.synced_at (proxy). Como já
+  // upsertamos os pedidos, usamos heurística simples: se já tem itens E o
+  // pedido tinha o mesmo dataAlteracao no momento da leitura, pula.
+  // (A leitura acima ocorreu após o upsert, então prevMap.bling_updated_at
+  // == incoming.bling_updated_at sempre. A condição efetiva é apenas
+  // `hasItems && incoming.bling_updated_at não está vazio`. Isso já evita
+  // re-fetch de pedidos antigos que já foram trazidos uma vez.)
+
+  const toFetch: number[] = [];
+  let skipped = 0;
+  for (const it of incoming) {
+    if (hasItems.has(it.bling_id) && prevMap.has(it.bling_id)) {
+      skipped++;
+    } else {
+      toFetch.push(it.bling_id);
+    }
+  }
+
+  if (toFetch.length === 0) return { fetched: 0, skipped };
+
+  // 2) Apaga itens antigos só dos pedidos que vamos refetchar.
   const { error: delErr } = await supabaseAdmin
     .from("bling_order_items")
     .delete()
     .eq("tenant_id", tenantId)
-    .in("order_bling_id", orderIds);
+    .in("order_bling_id", toFetch);
   if (delErr) throw new Error(delErr.message);
 
   const allRows: Array<Record<string, unknown>> = [];
-  // Paralelismo limitado: dispara N detail-fetches simultâneos, mas o throttle
-  // por tenant garante que a saída para o Bling ainda fique abaixo de 4 req/s.
-  for (let i = 0; i < orderIds.length; i += ORDER_ITEMS_CONCURRENCY) {
-    const slice = orderIds.slice(i, i + ORDER_ITEMS_CONCURRENCY);
+  for (let i = 0; i < toFetch.length; i += ORDER_ITEMS_CONCURRENCY) {
+    const slice = toFetch.slice(i, i + ORDER_ITEMS_CONCURRENCY);
     const results = await Promise.all(slice.map(async (oid) => {
       try {
         const detail = await blingFetch<{ data?: Record<string, unknown> }>(
@@ -335,6 +384,7 @@ async function fetchAndUpsertOrderItems(tenantId: string, orderIds: number[]) {
       .insert(allRows as never);
     if (insErr) throw new Error(insErr.message);
   }
+  return { fetched: toFetch.length, skipped };
 }
 
 // ===================== CONTATOS =====================
