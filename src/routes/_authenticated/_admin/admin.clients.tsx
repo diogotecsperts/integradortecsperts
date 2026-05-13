@@ -419,7 +419,8 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
   const { data } = useQuery({
     queryKey: ["admin", "bling-status", tenantId],
     queryFn: () => status({ data: { tenantId } }),
-    refetchInterval: 10000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
   const m = useMutation({
     mutationFn: (v: { resource: "deposits" | "products" | "stock" | "orders" | "contacts" | "all"; mode?: "full" | "incremental" }) =>
