@@ -833,11 +833,15 @@ export type Database = {
       }
       is_superadmin: { Args: never; Returns: boolean }
       reap_stale_bling_runs: { Args: never; Returns: number }
+      setup_bling_cron: {
+        Args: { p_apikey: string; p_url: string }
+        Returns: string
+      }
     }
     Enums: {
       ai_message_role: "user" | "assistant" | "system"
       app_role: "superadmin" | "cliente"
-      bling_sync_status: "running" | "ok" | "error"
+      bling_sync_status: "running" | "ok" | "error" | "paused"
       tenant_status: "active" | "suspended" | "blocked"
     }
     CompositeTypes: {
@@ -968,7 +972,7 @@ export const Constants = {
     Enums: {
       ai_message_role: ["user", "assistant", "system"],
       app_role: ["superadmin", "cliente"],
-      bling_sync_status: ["running", "ok", "error"],
+      bling_sync_status: ["running", "ok", "error", "paused"],
       tenant_status: ["active", "suspended", "blocked"],
     },
   },

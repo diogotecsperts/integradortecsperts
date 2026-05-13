@@ -1,153 +1,109 @@
 ## Objetivo
 
-Acelerar a sincronização de pedidos (~60→~480 itens/h por cron) sem estourar o rate-limit do Bling (4 req/s) nem o timeout do Worker (30s), e endurecer o "Sync FULL" para sobreviver a runs longas.
+Tornar a sincronização Bling resiliente a runs longas (sem o reaper matar tarefas só porque elas estão entre ticks) e remover a necessidade de rodar SQL manualmente para configurar o `pg_cron`.
 
-## 1. `sync.server.ts` — paralelismo limitado no detail-fetch + parâmetros
+---
 
-### 1a. Tornar o `throttle()` seguro para concorrência (pré-requisito)
+## 1. Novo status `paused` (separar "aguardando próximo tick" de "em execução agora")
 
-**Arquivo:** `src/lib/bling/client.server.ts` (linhas 19–28)
+**Migration (DB):**
+- `ALTER TYPE bling_sync_status ADD VALUE 'paused';`
+- Atualizar `reap_stale_bling_runs()` para considerar **stale** apenas runs em `status = 'running'` sem heartbeat há > 5 min. Runs em `paused` são ignoradas pelo reaper (não têm heartbeat porque estão dormindo entre ticks).
 
-Hoje `throttle()` lê/escreve `lastCall` sem fila — chamadas paralelas calculam `wait=0` a partir do mesmo timestamp e disparam juntas, furando o limite de 4 req/s. Substituir por fila assíncrona por tenant:
+**`src/lib/bling/sync.server.ts`:**
+- `pauseRun()`: além de salvar `next_page` e `items_processed`, atualizar `status = 'paused'` e limpar `heartbeat_at` (ou deixar como está — o reaper só olha `running`).
+- `runPaginatedBatch()`: ao retomar (`resumeRunId`), o primeiro update deve setar `status = 'running'` e `heartbeat_at = now()` antes do primeiro fetch.
+- `endRun()` continua setando `ok` ou `error` normalmente (sobrescreve `paused`/`running`).
 
-```ts
-const tenantQueues = new Map<string, Promise<void>>();
-async function throttle(tenantId: string) {
-  const prev = tenantQueues.get(tenantId) ?? Promise.resolve();
-  let release!: () => void;
-  const next = new Promise<void>((r) => { release = r; });
-  tenantQueues.set(tenantId, prev.then(() => next));
-  await prev;
-  const now = Date.now();
-  const last = lastCall.get(tenantId) ?? 0;
-  const wait = Math.max(0, last + MIN_INTERVAL_MS - now);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-  lastCall.set(tenantId, Date.now());
-  release();
-}
-```
+**`src/routes/api/public/hooks/bling-sync-tick.tsx`:**
+- A query que busca runs para retomar deve usar `.in("status", ["running", "paused"])` no lugar de `.eq("status", "running")`.
+- Continuar exigindo `next_page IS NOT NULL` (sinal de que há trabalho pendente).
 
-Resultado: mesmo com `Promise.all` de 3+ chamadas, a saída para o Bling continua espaçada por ≥260ms. Sem isso, o paralelismo proposto causa 429.
+---
 
-### 1b. `fetchAndUpsertOrderItems` — lotes de 3 em paralelo
+## 2. Auto-configuração do cron por botão
 
-**Arquivo:** `src/lib/bling/sync.server.ts` (~linhas 222–262)
+**`src/lib/bling.functions.ts`** — nova server function `setupBlingCron`:
+- Restrita a superadmin (`assertSuperadmin`).
+- Usa `supabaseAdmin.rpc("exec_sql", ...)` **ou** mais simples: faz `supabaseAdmin.from("...").rpc()` chamando uma função SQL `setup_bling_cron(url text, apikey text)` que criamos via migration. (Postgres não permite executar SQL arbitrário via PostgREST diretamente, então o caminho limpo é uma função SQL `SECURITY DEFINER`.)
+- Parâmetros derivados no servidor:
+  - `url` = `https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-tick`
+  - `apikey` = `process.env.SUPABASE_PUBLISHABLE_KEY`
+- A função SQL faz: `SELECT cron.unschedule('bling-sync-tick')` (ignorando erro se não existir) e depois `cron.schedule('bling-sync-tick', '*/5 * * * *', $$ SELECT net.http_post(url:=..., headers:=..., body:='{}'::jsonb) $$)`.
+- Retorna `{ ok: true, schedule: '*/5 * * * *', url }`.
 
-Trocar o `for (const oid of orderIds)` por chunks de 3 com `Promise.all`:
+**Migration (DB):**
+- Garantir extensões `pg_cron` e `pg_net` (já devem estar).
+- Criar `public.setup_bling_cron(p_url text, p_apikey text)` `SECURITY DEFINER` que executa o (un)schedule descrito acima. Restringir `EXECUTE` a `service_role`.
 
-```ts
-const CONCURRENCY = 3;
-for (let i = 0; i < orderIds.length; i += CONCURRENCY) {
-  const slice = orderIds.slice(i, i + CONCURRENCY);
-  const results = await Promise.all(slice.map(async (oid) => {
-    try {
-      const detail = await blingFetch<{ data?: Record<string, unknown> }>(
-        tenantId, `/pedidos/vendas/${oid}`,
-      );
-      return { oid, itens: (detail?.data?.itens as Array<Record<string, unknown>>) ?? [] };
-    } catch (e) {
-      console.warn(`[bling-sync] tenant=${tenantId} resource=orders item-detail-fail order=${oid} err=${errMessage(e)}`);
-      return { oid, itens: [] };
-    }
-  }));
-  for (const { oid, itens } of results) {
-    for (const it of itens) {
-      // mesma montagem de allRows que existe hoje
-    }
-  }
-}
-```
+**`src/routes/_authenticated/_admin/admin.clients.tsx`:**
+- Botão **"Configurar agendamento automático"** no header da página (área de superadmin).
+- `useMutation` que chama `setupBlingCron`, mostra toast com URL/cron configurados.
 
-Mantém o catch por pedido (um detail fail não derruba o batch). O insert único no fim continua igual.
+---
 
-### 1c. Parâmetros
+## 3. Tooltip de erro: distinguir Stale vs API
 
-**Arquivo:** `src/lib/bling/sync.server.ts` (linhas 9–13)
+**`src/routes/_authenticated/_admin/admin.clients.tsx` e `src/routes/_authenticated/integracao-bling.tsx`:**
+- O Tooltip de erro já mostra `error_message`. Adicionar um **prefixo/badge** acima da mensagem:
+  - Se `error_message` começa com `"Stale:"` → badge `STALE` (cinza/amarelo) + texto "Reaper matou — run ficou sem heartbeat".
+  - Se contém `"BlingError"` ou status HTTP → badge `API BLING` (vermelho).
+  - Caso contrário → badge `INTERNO`.
+- Pequena função utilitária `classifyError(msg)` no mesmo arquivo.
 
-```ts
-const ORDERS_PAGES_PER_BATCH = 1;   // mantém
-const ORDERS_PAGE_LIMIT = 40;       // era 20
-```
+---
 
-Custo por tick (40 pedidos):
-- 1 list call: ~260ms
-- 40 details em chunks de 3 paralelos: ceil(40/3)=14 rodadas × 260ms ≈ 3,7s
-- Upsert + delete + insert dos itens: ~0,5–1s
-- **Total ≈ 5–6s**, bem abaixo dos 30s do Worker.
+## Detalhes técnicos
 
-### 1d. Heartbeat com precisão de 30s
-
-**Arquivo:** `src/lib/bling/sync.server.ts`, função `runPaginatedBatch` (~388–470)
-
-Hoje o heartbeat só é gravado depois de cada upsert. Em pedidos com detail-fetch lento, o gap entre upserts pode passar de 5min e o reaper mata a run. Adicionar um ticker independente:
-
-```ts
-const hbTimer = setInterval(() => {
-  supabaseAdmin.from("bling_sync_runs").update({
-    heartbeat_at: new Date().toISOString(),
-    items_processed: count,
-  }).eq("id", runId).then(() => {});
-}, 30_000);
-try {
-  // loop atual
-} finally {
-  clearInterval(hbTimer);
-}
-```
-
-## 2. Cron — de 20min para 5min
-
-**Não é migration** (contém URL e anon key específicos do projeto). Usar `supabase.insert` via tool de SQL para reagendar:
-
+**Reaper atualizado (resumo SQL):**
 ```sql
-SELECT cron.unschedule('bling-sync-tick');
-SELECT cron.schedule(
-  'bling-sync-tick',
-  '*/5 * * * *',
-  $$
-  SELECT net.http_post(
-    url := 'https://project--9225351c-a819-46d4-8167-24170081c08a.lovable.app/api/public/hooks/bling-sync-tick',
-    headers := '{"Content-Type":"application/json","apikey":"<ANON_KEY_ATUAL>"}'::jsonb,
-    body := '{}'::jsonb
-  ) AS request_id;
-  $$
-);
+UPDATE bling_sync_runs
+SET status='error', finished_at=now(),
+    error_message=COALESCE(error_message,'Stale: sem heartbeat há mais de 5 minutos')
+WHERE status='running'  -- não toca em 'paused'
+  AND COALESCE(heartbeat_at, started_at) < now() - interval '5 minutes';
 ```
 
-Resultado combinado (1+2): **40 pedidos a cada 5 min ≈ 480 itens/h**, ~8× o ritmo atual. Para 50k pedidos numa carga inicial, ainda usar o botão "Sync FULL" (que não usa o cron).
+**Resume flow:**
+```
+tick → busca run com status IN ('running','paused') AND next_page IS NOT NULL
+     → marca status='running', heartbeat_at=now()
+     → roda runPaginatedBatch
+     → no fim do batch: pauseRun → status='paused', next_page=N
+```
 
-## 3. UI — aviso "Sync FULL em andamento" no admin
+**Função SQL `setup_bling_cron`:**
+```sql
+CREATE OR REPLACE FUNCTION public.setup_bling_cron(p_url text, p_apikey text)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public, cron, net AS $$
+BEGIN
+  PERFORM cron.unschedule('bling-sync-tick')
+    WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='bling-sync-tick');
+  PERFORM cron.schedule('bling-sync-tick', '*/5 * * * *',
+    format($c$ SELECT net.http_post(
+      url:=%L,
+      headers:=jsonb_build_object('Content-Type','application/json','apikey',%L),
+      body:='{}'::jsonb) $c$, p_url, p_apikey));
+  RETURN 'scheduled */5 * * * * → '||p_url;
+END $$;
+REVOKE ALL ON FUNCTION public.setup_bling_cron(text,text) FROM PUBLIC;
+```
 
-**Arquivo:** `src/routes/_authenticated/_admin/admin.clients.tsx` (~linhas 481–485, próximo ao botão "Sync FULL (tudo)")
+---
 
-- Detectar via `data.lastRuns`: se houver alguma run com `status === "running"` cujo `meta.mode === "full"` (ou `next_page != null`), mostrar um banner amarelo logo abaixo do botão:
-  ```
-  ⚠ Sync FULL em andamento — não feche esta aba até concluir. 
-  Última atualização: <heartbeat há Xs>.
-  ```
-- Mostrar tempo desde o último `heartbeat_at` em segundos (atualizado via `setInterval` local de 5s) — se passar de 60s, pintar de vermelho.
-- Quando o usuário clicar em "Sync FULL", abrir um `confirm` com o mesmo aviso antes de disparar.
+## Arquivos tocados
 
-> O backend não depende da aba aberta (o `runUntil` roda no Worker). O aviso é só para o usuário não ficar achando que está congelado e não cancelar a chamada `useMutation` em andamento, o que abortaria o request e mataria o run no meio.
+1. **Migration nova** — adiciona enum `paused`, atualiza `reap_stale_bling_runs`, cria `setup_bling_cron`.
+2. `src/lib/bling/sync.server.ts` — `pauseRun` (status=paused), retomada (status=running + heartbeat).
+3. `src/routes/api/public/hooks/bling-sync-tick.tsx` — query aceita `running` e `paused`.
+4. `src/lib/bling.functions.ts` — server fn `setupBlingCron`.
+5. `src/routes/_authenticated/_admin/admin.clients.tsx` — botão "Configurar agendamento automático" + classificação visual de erro no Tooltip.
+6. `src/routes/_authenticated/integracao-bling.tsx` — mesma classificação visual no Tooltip.
 
-## Fora de escopo
+---
 
-- Não mexer em RLS, schema, edge functions, nem em `client.ts`/`auth-middleware.ts`.
-- Não mudar a estratégia de "1 recurso por tenant por tick" — só os parâmetros e o paralelismo interno.
-- Não tocar em `syncContacts`/`syncProducts`/`syncStock`/`syncDeposits` além do throttle compartilhado.
+## Resultado esperado
 
-## Detalhes técnicos (resumo de risco)
-
-| Risco | Mitigação |
-|-------|-----------|
-| `Promise.all` fura 4 req/s do Bling → 429 cascata | Fila assíncrona em `throttle()` (1a) — sem isso, NÃO ative o paralelismo |
-| Tick acima de 30s | 40 pedidos × paralelismo 3 = ~5–6s; folga grande |
-| Reaper mata run longa | Heartbeat por `setInterval(30s)` |
-| pg_cron com URL ou key errada | SQL via insert tool, não migration; conferir com `SELECT * FROM cron.job` depois |
-
-## Arquivos a editar
-
-- `src/lib/bling/client.server.ts` — fila no throttle
-- `src/lib/bling/sync.server.ts` — Promise.all no detail-fetch, constantes, heartbeat ticker
-- `src/routes/_authenticated/_admin/admin.clients.tsx` — banner + confirm do Sync FULL
-- pg_cron — reagendar para `*/5 * * * *` (via SQL insert)
+- Runs longas **não morrem mais** entre ticks (status `paused` sai do radar do reaper).
+- Um clique em "Configurar agendamento automático" agenda o cron a cada 5 min — sem SQL manual.
+- O Tooltip de erro mostra de cara se o problema foi reaper (`STALE`), API do Bling, ou erro interno — facilitando diagnóstico.
