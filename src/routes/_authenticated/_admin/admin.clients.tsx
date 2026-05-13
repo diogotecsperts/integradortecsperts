@@ -499,7 +499,7 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
         <SyncBtn label="Pedidos (full)" onClick={() => m.mutate({ resource: "orders", mode: "full" })} loading={m.isPending} disabled={!data?.connected} />
         <SyncBtn label="Pedidos (incr.)" onClick={() => m.mutate({ resource: "orders", mode: "incremental" })} loading={m.isPending} disabled={!data?.connected} />
       </div>
-      <FullSyncBanner lastRuns={data?.lastRuns ?? []} />
+      <FullSyncBanner tenantId={tenantId} lastRuns={data?.lastRuns ?? []} />
       <button type="button" disabled={m.isPending || !data?.connected}
         onClick={() => {
           const ok = window.confirm(
