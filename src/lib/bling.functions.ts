@@ -274,16 +274,84 @@ export const resumeBlingRun = createServerFn({ method: "POST" })
     }
 
     const fn = data.resource === "orders" ? syncOrders : data.resource === "products" ? syncProducts : syncContacts;
-    const r = await fn(data.tenantId, "incremental", { resumeRunId: pending.id });
+    let result: Awaited<ReturnType<typeof fn>> | null = null;
+    let runError: string | null = null;
+    try {
+      result = await fn(data.tenantId, "incremental", { resumeRunId: pending.id });
+    } catch (e) {
+      runError = e instanceof Error ? e.message : String(e);
+    }
+
+    // Audit log (best-effort)
+    try {
+      await supabaseAdmin.from("audit_logs").insert({
+        tenant_id: data.tenantId,
+        user_id: context.userId,
+        action: "bling.sync.resume",
+        metadata: {
+          resource: data.resource,
+          runId: pending.id,
+          previousNextPage: pending.next_page,
+          previousItems: pending.items_processed,
+          done: result?.done ?? null,
+          count: result?.count ?? null,
+          nextPage: result?.nextPage ?? null,
+          error: runError,
+        },
+      });
+    } catch (e) {
+      console.error("[resumeBlingRun] audit log failed:", e);
+    }
+
+    if (runError) throw new Response(runError, { status: 500 });
     return {
       resumed: true as const,
       runId: pending.id,
       previousNextPage: pending.next_page,
       previousItems: pending.items_processed,
-      done: r.done,
-      count: r.count,
-      nextPage: r.nextPage,
+      done: result!.done,
+      count: result!.count,
+      nextPage: result!.nextPage,
     };
+  });
+
+// ============ AUDIT LOG DE RESUMES MANUAIS (apenas superadmin) ============
+export const getBlingResumeAuditLog = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await assertSuperadmin(context.userId);
+    const { data: rows, error } = await supabaseAdmin
+      .from("audit_logs")
+      .select("id, created_at, tenant_id, user_id, metadata")
+      .eq("action", "bling.sync.resume")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) throw new Response(error.message, { status: 500 });
+
+    const userIds = Array.from(new Set((rows ?? []).map(r => r.user_id).filter(Boolean) as string[]));
+    const tenantIds = Array.from(new Set((rows ?? []).map(r => r.tenant_id).filter(Boolean) as string[]));
+
+    const [profilesRes, tenantsRes] = await Promise.all([
+      userIds.length
+        ? supabaseAdmin.from("profiles").select("id, email, full_name").in("id", userIds)
+        : Promise.resolve({ data: [] as Array<{ id: string; email: string | null; full_name: string | null }> }),
+      tenantIds.length
+        ? supabaseAdmin.from("tenants").select("id, name").in("id", tenantIds)
+        : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+    ]);
+
+    const userMap = new Map((profilesRes.data ?? []).map(p => [p.id, p]));
+    const tenantMap = new Map((tenantsRes.data ?? []).map(t => [t.id, t]));
+
+    return (rows ?? []).map(r => ({
+      id: r.id,
+      createdAt: r.created_at,
+      tenantId: r.tenant_id,
+      tenantName: r.tenant_id ? tenantMap.get(r.tenant_id)?.name ?? null : null,
+      userId: r.user_id,
+      userLabel: r.user_id ? (userMap.get(r.user_id)?.full_name || userMap.get(r.user_id)?.email || r.user_id) : null,
+      metadata: (r.metadata ?? {}) as Record<string, unknown>,
+    }));
   });
 
 // ============ HEALTH DO CRON (apenas superadmin) ============
