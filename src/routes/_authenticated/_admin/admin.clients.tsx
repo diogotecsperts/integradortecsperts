@@ -126,7 +126,7 @@ function ClientsPage() {
       ) : (
         <div className="space-y-4">
           {tenants.map((t) => {
-            const users = profiles.filter((p) => p.tenant_id === t.id);
+            const users = profilesByTenant.get(t.id) ?? [];
             return (
               <div key={t.id} className="glass rounded-2xl p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
