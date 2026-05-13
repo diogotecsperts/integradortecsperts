@@ -427,6 +427,8 @@ async function runPaginatedBatch(args: {
     count = data.items_processed ?? 0;
     const m = (data.meta as { dataAlteracaoInicial?: string } | null) ?? null;
     dataAlteracaoInicial = m?.dataAlteracaoInicial;
+    // Sai de 'paused' e volta para 'running' antes do primeiro fetch.
+    await markRunning(runId);
   } else {
     if (mode === "incremental") {
       const last = await getLastOkFinishedAt(tenantId, resource);
