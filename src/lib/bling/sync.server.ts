@@ -6,11 +6,11 @@ type Resource = "deposits" | "products" | "stock" | "orders" | "contacts";
 
 // Quantas páginas processamos por execução (batch). Mantém o tick curto e evita timeouts.
 const PAGES_PER_BATCH = 5;
-// Pedidos exigem detail-fetch por item — mais pesado, então menos páginas por tick.
-const ORDERS_PAGES_PER_BATCH = 1;
-// Tamanho da página de pedidos: 40 itens × paralelismo 3 ≈ 4s, bem dentro do limite de 30s.
+// Pedidos: 2 páginas/tick agora que o skip-se-inalterado reduz drasticamente o detail-fetch.
+const ORDERS_PAGES_PER_BATCH = 2;
+// Tamanho da página de pedidos.
 const ORDERS_PAGE_LIMIT = 40;
-// Quantos detail-fetches de pedidos rodam em paralelo (o throttle do client serializa em ~260ms).
+// Quantos detail-fetches de pedidos rodam em paralelo (throttle do client serializa em ~260ms).
 const ORDER_ITEMS_CONCURRENCY = 3;
 
 async function startRun(
