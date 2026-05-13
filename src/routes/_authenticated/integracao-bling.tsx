@@ -72,7 +72,8 @@ function ClientView() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["bling", "status", "self"],
     queryFn: () => status({}),
-    refetchInterval: 15000,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 
   const mLink = useMutation({
