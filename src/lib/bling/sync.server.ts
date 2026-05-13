@@ -493,7 +493,7 @@ async function runPaginatedBatch(args: {
       .update({ heartbeat_at: new Date().toISOString(), items_processed: count })
       .eq("id", runId)
       .then(() => undefined);
-  }, 30_000);
+  }, 10_000);
 
   try {
     for (let i = 0; i < pagesPerBatch; i++) {
