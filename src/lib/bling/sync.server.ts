@@ -268,22 +268,42 @@ export async function syncOrders(
     pagesPerBatch: ORDERS_PAGES_PER_BATCH,
     pageLimit: ORDERS_PAGE_LIMIT,
     upsert: async (list) => {
-      // Captura o dataAlteracao de cada pedido na lista ANTES do upsert,
-      // pois é assim que decidimos se o detail-fetch pode ser pulado.
       const incoming = list.map((o) => ({
         bling_id: Number(o.id),
         bling_updated_at: (o.dataAlteracao as string) ?? null,
       }));
+      // 1) LÊ estado anterior ANTES do upsert (para comparar dataAlteracao).
+      const prevSnapshot = await readPrevOrdersSnapshot(tenantId, incoming.map((i) => i.bling_id));
       const rows = list.map(mapOrder(tenantId));
       const { error } = await supabaseAdmin
         .from("bling_orders")
         .upsert(rows as never, { onConflict: "tenant_id,bling_id" });
       if (error) throw new Error(error.message);
-      const skippedOrFetched = await fetchAndUpsertOrderItems(tenantId, incoming);
-      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length} itemsFetched=${skippedOrFetched.fetched} itemsSkipped=${skippedOrFetched.skipped}`);
+      // 2) Decide quem refetchar com base no snapshot anterior.
+      const r = await fetchAndUpsertOrderItems(tenantId, incoming, prevSnapshot);
+      console.log(`[bling-sync] tenant=${tenantId} resource=orders upserted=${rows.length} itemsFetched=${r.fetched} itemsSkipped=${r.skipped}`);
       return rows.length;
     },
   });
+}
+
+async function readPrevOrdersSnapshot(tenantId: string, orderIds: number[]) {
+  if (orderIds.length === 0) return { prevUpdated: new Map<number, string | null>(), hasItems: new Set<number>() };
+  const { data: prevOrders } = await supabaseAdmin
+    .from("bling_orders")
+    .select("bling_id, bling_updated_at")
+    .eq("tenant_id", tenantId)
+    .in("bling_id", orderIds);
+  const prevUpdated = new Map<number, string | null>(
+    (prevOrders ?? []).map((r) => [Number(r.bling_id), r.bling_updated_at as string | null]),
+  );
+  const { data: existingItems } = await supabaseAdmin
+    .from("bling_order_items")
+    .select("order_bling_id")
+    .eq("tenant_id", tenantId)
+    .in("order_bling_id", orderIds);
+  const hasItems = new Set<number>((existingItems ?? []).map((r) => Number(r.order_bling_id)));
+  return { prevUpdated, hasItems };
 }
 
 // =============== ORDER ITEMS ===============
