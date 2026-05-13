@@ -514,32 +514,44 @@ function BlingAdminPanel({ tenantId }: { tenantId: string }) {
       {data?.lastRuns && data.lastRuns.length > 0 && (
         <TooltipProvider delayDuration={150}>
           <div className="max-h-56 space-y-1 overflow-auto text-[11px]">
-            {data.lastRuns.slice(0, 8).map((r) => (
-              <div key={r.id} className="border-t border-border/40 pt-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
-                  {r.status === "error" && r.error_message ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="cursor-help text-destructive underline decoration-dotted">{r.status}</span>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
-                        {r.error_message}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <span className={r.status === "ok" ? "text-emerald-400" : r.status === "error" ? "text-destructive" : "text-primary"}>{r.status}</span>
-                  )}
-                  <span className="text-muted-foreground">{r.items_processed} itens</span>
-                  <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
-                </div>
-                {r.status === "error" && r.error_message && (
-                  <div className="mt-0.5 truncate text-[10px] text-destructive/80" title={r.error_message}>
-                    {r.error_message}
+            {data.lastRuns.slice(0, 8).map((r) => {
+              const k = classifyError(r.error_message);
+              return (
+                <div key={r.id} className="border-t border-border/40 pt-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{RES_LABEL[r.resource] ?? r.resource}</span>
+                    {r.status === "error" && r.error_message ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex cursor-help items-center gap-1">
+                            <span className={`rounded border px-1 py-px text-[9px] font-semibold uppercase ${KIND_BADGE[k.kind]}`}>{k.label}</span>
+                            <span className="text-destructive underline decoration-dotted">{r.status}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-md whitespace-pre-wrap break-words bg-popover text-popover-foreground">
+                          <div className="mb-1 text-[10px] font-semibold uppercase opacity-80">{k.label} — {k.hint}</div>
+                          {r.error_message}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className={
+                        r.status === "ok" ? "text-emerald-400"
+                          : r.status === "error" ? "text-destructive"
+                          : r.status === "paused" ? "text-amber-400"
+                          : "text-primary"
+                      }>{r.status}</span>
+                    )}
+                    <span className="text-muted-foreground">{r.items_processed} itens</span>
+                    <span className="text-muted-foreground">{new Date(r.started_at).toLocaleTimeString("pt-BR")}</span>
                   </div>
-                )}
-              </div>
-            ))}
+                  {r.status === "error" && r.error_message && (
+                    <div className="mt-0.5 truncate text-[10px] text-destructive/80" title={r.error_message}>
+                      [{k.label}] {r.error_message}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </TooltipProvider>
       )}
