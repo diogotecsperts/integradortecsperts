@@ -579,9 +579,21 @@ type RunRow = {
   started_at: string;
 };
 
-function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
+function FullSyncBanner({ tenantId, lastRuns }: { tenantId: string; lastRuns: ReadonlyArray<RunRow> }) {
   const running = lastRuns.find((r) => (r.status === "running" || r.status === "paused") && r.next_page != null);
   const [, force] = React.useReducer((x: number) => x + 1, 0);
+  const resume = useServerFn(resumeBlingRun);
+  const qc = useQueryClient();
+  const mResume = useMutation({
+    mutationFn: (resource: "orders" | "products" | "contacts") => resume({ data: { tenantId, resource } }),
+    onSuccess: (r) => {
+      if (!r.resumed) toast.message("Nada para retomar", { description: "Nenhuma run pausada para este recurso." });
+      else if (r.done) toast.success(`Retomada concluída — ${r.count} itens processados.`);
+      else toast.success(`Retomada disparada — pág atual ${r.nextPage}. O cron continua a partir daqui.`);
+      qc.invalidateQueries({ queryKey: ["admin", "bling-status", tenantId] });
+    },
+    onError: async (e) => toast.error(e instanceof Response ? await e.text() : (e as Error).message),
+  });
   React.useEffect(() => {
     if (!running) return;
     const t = setInterval(() => force(), 5000);
@@ -591,10 +603,24 @@ function FullSyncBanner({ lastRuns }: { lastRuns: ReadonlyArray<RunRow> }) {
   const ref = running.heartbeat_at ?? running.started_at;
   const ageSec = Math.max(0, Math.floor((Date.now() - new Date(ref).getTime()) / 1000));
   const stale = ageSec > 60;
+  const isResumable = running.resource === "orders" || running.resource === "products" || running.resource === "contacts";
   return (
     <div className={`rounded-md border px-2 py-1.5 text-[11px] ${stale ? "border-destructive/40 bg-destructive/5 text-destructive" : "border-amber-500/30 bg-amber-500/5 text-amber-300"}`}>
-      ⚠ Sync em andamento ({RES_LABEL[running.resource] ?? running.resource}, página {running.next_page}). Não feche esta aba.
-      <div className="mt-0.5 opacity-80">Último heartbeat: {ageSec}s atrás{stale ? " — possivelmente travado" : ""}.</div>
+      <div>⚠ Sync em andamento ({RES_LABEL[running.resource] ?? running.resource}, página {running.next_page}). Não feche esta aba.</div>
+      <div className="mt-0.5 flex items-center justify-between gap-2 opacity-90">
+        <span>Último heartbeat: {ageSec}s atrás{stale ? " — possivelmente travado" : ""}.</span>
+        {isResumable && (
+          <button
+            type="button"
+            disabled={mResume.isPending}
+            onClick={() => mResume.mutate(running.resource as "orders" | "products" | "contacts")}
+            className="inline-flex items-center gap-1 rounded border border-current/40 px-2 py-0.5 text-[10px] font-semibold uppercase hover:bg-current/10 disabled:opacity-50"
+          >
+            {mResume.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Retomar agora
+          </button>
+        )}
+      </div>
     </div>
   );
 }
